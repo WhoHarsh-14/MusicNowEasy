@@ -1,3 +1,4 @@
+// @ts-ignore
 import { ZipArchive } from "archiver";
 import { Readable } from "stream";
 import fs from "fs";
