@@ -23,7 +23,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const clampedCount = Math.min(Math.max(Number(count) || 5, 1), 10);
+    const clampedCount = Math.min(Math.max(Number(count) || 5, 1), 30);
     const songs = await getSongRecommendations(prompt.trim(), clampedCount);
 
     return NextResponse.json({ songs });

@@ -59,41 +59,51 @@ export async function POST(request: NextRequest) {
     tempDir = path.join(os.tmpdir(), `musicnoweasy-${uuidv4()}`);
     fs.mkdirSync(tempDir, { recursive: true });
 
-    const downloadResults = [];
+    const downloadResults: { filePath: string; zipName: string }[] = [];
     const errors: string[] = [];
 
-    // Process songs sequentially to avoid overwhelming the system
-    for (const song of songs) {
-      try {
-        // 1. Find video ID on YouTube
-        const ytResult = await searchYouTubeVideoId(song.searchQuery);
-        if (!ytResult) {
-          errors.push(`Could not find "${song.title}" on YouTube`);
-          continue;
-        }
+    // Process songs concurrently with a worker pool (limit = 3) to optimize speed
+    const queue = [...songs];
+    const concurrency = 3;
+    const workers = Array.from({ length: concurrency }, async () => {
+      while (queue.length > 0) {
+        const song = queue.shift();
+        if (!song) break;
 
-        // 2. Download the audio
-        const result = await downloadSong(
-          ytResult.videoId,
-          `${song.title} - ${song.artist}`,
-          tempDir
-        );
+        try {
+          // 1. Find video ID on YouTube
+          const ytResult = await searchYouTubeVideoId(song.searchQuery);
+          if (!ytResult) {
+            errors.push(`Could not find "${song.title}" on YouTube`);
+            continue;
+          }
 
-        if (result.success && result.filePath) {
-          downloadResults.push({
-            filePath: result.filePath,
-            zipName: sanitizeFileName(`${song.title} - ${song.artist}.mp3`),
-          });
-        } else {
-          errors.push(
-            `Failed to download "${song.title}": ${result.error}`
+          // 2. Download the audio
+          const result = await downloadSong(
+            ytResult.videoId,
+            `${song.title} - ${song.artist}`,
+            tempDir!
           );
+
+          if (result.success && result.filePath) {
+            downloadResults.push({
+              filePath: result.filePath,
+              zipName: sanitizeFileName(`${song.title} - ${song.artist}.mp3`),
+            });
+          } else {
+            errors.push(
+              `Failed to download "${song.title}": ${result.error}`
+            );
+          }
+        } catch (err: unknown) {
+          const e = err as Error;
+          errors.push(`Error processing "${song.title}": ${e.message}`);
         }
-      } catch (err: unknown) {
-        const e = err as Error;
-        errors.push(`Error processing "${song.title}": ${e.message}`);
       }
-    }
+    });
+
+    await Promise.all(workers);
+
 
     if (downloadResults.length === 0) {
       return NextResponse.json(

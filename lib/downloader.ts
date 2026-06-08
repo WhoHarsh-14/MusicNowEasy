@@ -148,10 +148,16 @@ export async function downloadSong(
   }
 }
 
+let cachedHealth: { ytdlp: boolean; ffmpeg: boolean } | null = null;
+
 export async function checkYtdlp(): Promise<{
   ytdlp: boolean;
   ffmpeg: boolean;
 }> {
+  if (cachedHealth && cachedHealth.ytdlp && cachedHealth.ffmpeg) {
+    return cachedHealth;
+  }
+
   try {
     const { ytdlpPath, ffmpegPath: resolvedFfmpegPath } = await getExecutablePaths();
 
@@ -168,10 +174,16 @@ export async function checkYtdlp(): Promise<{
       console.error("Health check: yt-dlp-exec version check failed:", err);
     }
 
-    return {
+    const result = {
       ytdlp: ytdlpExists,
       ffmpeg: ffmpegExists,
     };
+
+    if (result.ytdlp && result.ffmpeg) {
+      cachedHealth = result;
+    }
+
+    return result;
   } catch (err) {
     console.error("Health check failed:", err);
     return {
@@ -180,3 +192,4 @@ export async function checkYtdlp(): Promise<{
     };
   }
 }
+

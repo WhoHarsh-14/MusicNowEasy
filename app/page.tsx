@@ -37,6 +37,7 @@ const STEPS = [
 export default function HomePage() {
   const [prompt, setPrompt] = useState("");
   const [songCount, setSongCount] = useState(5);
+  const [inputValue, setInputValue] = useState("5");
   const [step, setStep] = useState<AppStep>("idle");
   const [currentStepIdx, setCurrentStepIdx] = useState(-1);
   const [songs, setSongs] = useState<SongRecommendation[]>([]);
@@ -45,6 +46,10 @@ export default function HomePage() {
   const [health, setHealth] = useState<HealthStatus | null>(null);
   const [statusMsg, setStatusMsg] = useState("");
   const [downloadComplete, setDownloadComplete] = useState(false);
+
+  useEffect(() => {
+    setInputValue(songCount.toString());
+  }, [songCount]);
 
   // Check prerequisites on mount
   useEffect(() => {
@@ -66,6 +71,26 @@ export default function HomePage() {
   const selectAll = useCallback(() => {
     setSelectedSongs(new Set(songs.map((_, i) => i)));
   }, [songs]);
+
+  const handleCountChange = (valStr: string) => {
+    setInputValue(valStr);
+    const num = parseInt(valStr, 10);
+    if (!isNaN(num)) {
+      setSongCount(Math.min(Math.max(num, 1), 30));
+    }
+  };
+
+  const handleCountBlur = () => {
+    const num = parseInt(inputValue, 10);
+    if (isNaN(num)) {
+      setSongCount(5);
+      setInputValue("5");
+    } else {
+      const clamped = Math.min(Math.max(num, 1), 30);
+      setSongCount(clamped);
+      setInputValue(clamped.toString());
+    }
+  };
 
   const handleGenerate = async () => {
     if (!prompt.trim()) return;
@@ -300,21 +325,65 @@ export default function HomePage() {
           <div className="divider" />
 
           {/* Song Count Selector */}
-          <div className="count-row">
-            <label htmlFor="song-count" className="count-label">
-              🎵 Number of songs
-            </label>
-            <input
-              id="song-count"
-              type="range"
-              min={1}
-              max={10}
-              value={songCount}
-              onChange={(e) => setSongCount(Number(e.target.value))}
-              className="count-slider"
-              disabled={isLoading}
-            />
-            <div className="count-badge">{songCount}</div>
+          <div className="count-row-new">
+            <div className="count-header">
+              <label htmlFor="song-count-input" className="count-label">
+                🎵 Number of songs
+              </label>
+            </div>
+            
+            <div className="count-controls">
+              {/* Presets */}
+              <div className="preset-buttons">
+                {[5, 10, 15, 20].map((num) => (
+                  <button
+                    key={num}
+                    id={`preset-btn-${num}`}
+                    type="button"
+                    className={`preset-btn ${songCount === num ? "active" : ""}`}
+                    onClick={() => !isLoading && setSongCount(num)}
+                    disabled={isLoading}
+                  >
+                    {num}
+                  </button>
+                ))}
+              </div>
+
+              {/* Custom numeric stepper */}
+              <div className="custom-stepper">
+                <button
+                  id="stepper-dec-btn"
+                  type="button"
+                  className="stepper-btn"
+                  onClick={() => !isLoading && setSongCount(prev => Math.max(1, prev - 1))}
+                  disabled={isLoading || songCount <= 1}
+                  aria-label="Decrease song count"
+                >
+                  −
+                </button>
+                <input
+                  id="song-count-input"
+                  type="text"
+                  inputMode="numeric"
+                  pattern="[0-9]*"
+                  value={inputValue}
+                  onChange={(e) => handleCountChange(e.target.value)}
+                  onBlur={handleCountBlur}
+                  className="stepper-input"
+                  disabled={isLoading}
+                />
+                <button
+                  id="stepper-inc-btn"
+                  type="button"
+                  className="stepper-btn"
+                  onClick={() => !isLoading && setSongCount(prev => Math.min(30, prev + 1))}
+                  disabled={isLoading || songCount >= 30}
+                  aria-label="Increase song count"
+                >
+                  +
+                </button>
+              </div>
+            </div>
           </div>
 
           {/* Generate Button */}
