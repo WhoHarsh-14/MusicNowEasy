@@ -1,45 +1,21 @@
 import type { Metadata } from "next";
-import { Inter, Outfit } from "next/font/google";
 import "./globals.css";
 
-const inter = Inter({
-  subsets: ["latin"],
-  variable: "--font-inter",
-  display: "swap",
-});
-
-const outfit = Outfit({
-  subsets: ["latin"],
-  variable: "--font-outfit",
-  display: "swap",
-});
-
 export const metadata: Metadata = {
-  title: "MusicNowEasy — AI-Powered Song Downloader",
+  title: "MusicNowEasy — AI Music Curator & Downloader",
   description:
-    "Describe the music you want, and MusicNowEasy will find and download it for you as MP3 files using AI. Powered by Gemini AI and YouTube.",
-  keywords: [
-    "music downloader",
-    "AI music",
-    "mp3 download",
-    "song finder",
-    "Gemini AI",
-    "playlist generator",
-  ],
+    "Describe the music you're feeling — MusicNowEasy uses Gemini AI to curate a personalized playlist and downloads it as high-quality audio instantly.",
+  keywords: ["music downloader", "AI playlist", "m4a download", "song curator", "Gemini AI"],
   openGraph: {
-    title: "MusicNowEasy — AI-Powered Song Downloader",
-    description: "Describe the music you want. Get an instant MP3 download.",
+    title: "MusicNowEasy — AI Music Curator",
+    description: "Describe your vibe. Get a curated playlist downloaded instantly.",
     type: "website",
   },
 };
 
-export default function RootLayout({
-  children,
-}: Readonly<{
-  children: React.ReactNode;
-}>) {
+export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return (
-    <html lang="en" className={`${inter.variable} ${outfit.variable}`} suppressHydrationWarning>
+    <html lang="en" suppressHydrationWarning>
       <body suppressHydrationWarning>{children}</body>
     </html>
   );

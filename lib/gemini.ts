@@ -65,19 +65,42 @@ async function generateWithFallback(prompt: string): Promise<string> {
   throw lastError || new Error("All Gemini models are unavailable");
 }
 
+export interface QuizAnswers {
+  type?: string;
+  vibe?: string;
+  trend?: string;
+  theme?: string;
+  base?: string;
+}
+
 export async function getSongRecommendations(
   prompt: string,
-  count: number = 5
+  count: number = 5,
+  quiz?: QuizAnswers
 ): Promise<SongRecommendation[]> {
   if (!process.env.GEMINI_API_KEY) {
     throw new Error("GEMINI_API_KEY is not set in environment variables");
+  }
+
+  let refinementText = "";
+  if (quiz) {
+    const parts = [];
+    if (quiz.type) parts.push(`Type of song: ${quiz.type}`);
+    if (quiz.vibe) parts.push(`Vibe: ${quiz.vibe}`);
+    if (quiz.trend) parts.push(`Trend: ${quiz.trend}`);
+    if (quiz.theme) parts.push(`Theme: ${quiz.theme}`);
+    if (quiz.base) parts.push(`Base: ${quiz.base}`);
+
+    if (parts.length > 0) {
+      refinementText = `\n\nAdditionally, please refine the recommendations to fit these preferences:\n${parts.map(p => `- ${p}`).join("\n")}`;
+    }
   }
 
   const systemPrompt = `You are a music expert. The user wants to discover songs.
 Return ONLY a valid JSON array (no markdown, no explanation, no code blocks) with exactly ${count} songs matching the user's request.
 Each item must have: "title" (song name), "artist" (artist/band name), "searchQuery" (best YouTube search string to find this exact song, e.g. "Song Title Artist Name official audio").
 
-User's request: ${prompt}
+User's request: ${prompt}${refinementText}
 
 Respond with ONLY the JSON array, example format:
 [{"title":"Blinding Lights","artist":"The Weeknd","searchQuery":"Blinding Lights The Weeknd official audio"},{"title":"Levitating","artist":"Dua Lipa","searchQuery":"Levitating Dua Lipa official audio"}]`;

@@ -1,160 +1,158 @@
 import { NextRequest, NextResponse } from "next/server";
-import { searchYouTubeVideoId } from "@/lib/youtube";
 import { downloadSong, checkYtdlp } from "@/lib/downloader";
-import { createMp3Zip, sanitizeFileName } from "@/lib/zipper";
 import { SongRecommendation } from "@/lib/gemini";
+import { PassThrough } from "stream";
 import fs from "fs";
 import path from "path";
 import os from "os";
 import { v4 as uuidv4 } from "uuid";
 
-export const maxDuration = 300; // 5 minutes max for Vercel
+// This project uses a custom `archiver` package that exports named classes
+// (ZipArchive, TarArchive, etc.) — NOT the standard archiver npm package.
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const { ZipArchive } = require("archiver") as { ZipArchive: new (opts?: { zlib?: { level?: number } }) => {
+  pipe(dest: PassThrough): void;
+  file(filePath: string, opts: { name: string }): void;
+  finalize(): Promise<void>;
+  on(event: string, handler: (...args: unknown[]) => void): void;
+  destroy(err?: Error): void;
+}};
 
+export const maxDuration = 300; // 5 min Vercel cap
+
+// ── Concurrency semaphore ─────────────────────────────────────────────────────
+class Semaphore {
+  private permits: number;
+  private queue: Array<() => void> = [];
+
+  constructor(permits: number) {
+    this.permits = permits;
+  }
+
+  acquire(): Promise<void> {
+    return new Promise((resolve) => {
+      if (this.permits > 0) { this.permits--; resolve(); }
+      else this.queue.push(resolve);
+    });
+  }
+
+  release(): void {
+    const next = this.queue.shift();
+    if (next) { next(); }
+    else { this.permits++; }
+  }
+}
+
+/** Adaptive concurrency — scales with playlist size, hard-capped to protect host */
+function adaptiveConcurrency(n: number): number {
+  if (n <= 5)  return 3;
+  if (n <= 15) return 4;
+  if (n <= 30) return 5;
+  return 6;
+}
+
+function sanitize(name: string): string {
+  return name.replace(/[<>:"/\\|?*\x00-\x1f]/g, "").trim().substring(0, 80);
+}
+
+/** Bridge a Node.js PassThrough into a Web ReadableStream */
+function toWebStream(nodeStream: PassThrough): ReadableStream<Uint8Array> {
+  return new ReadableStream({
+    start(controller) {
+      nodeStream.on("data", (chunk: Buffer) => controller.enqueue(new Uint8Array(chunk)));
+      nodeStream.on("end",  ()              => controller.close());
+      nodeStream.on("error", (err: Error)   => controller.error(err));
+    },
+    cancel() {
+      nodeStream.destroy();
+    },
+  });
+}
+
+// ── Route handler ─────────────────────────────────────────────────────────────
 export async function POST(request: NextRequest) {
-  let tempDir: string | null = null;
-
-  try {
-    // Check prerequisites
-    const { ytdlp, ffmpeg } = await checkYtdlp();
-    if (!ytdlp) {
-      return NextResponse.json(
-        {
-          error:
-            "yt-dlp is not installed. Please run: winget install yt-dlp.yt-dlp",
-        },
-        { status: 503 }
-      );
-    }
-    if (!ffmpeg) {
-      return NextResponse.json(
-        {
-          error:
-            "ffmpeg is not installed. Please run: winget install Gyan.FFmpeg",
-        },
-        { status: 503 }
-      );
-    }
-
-    if (!process.env.YOUTUBE_API_KEY) {
-      return NextResponse.json(
-        {
-          error:
-            "YOUTUBE_API_KEY not configured. Please add it to your .env.local file.",
-        },
-        { status: 503 }
-      );
-    }
-
-    const body = await request.json();
-    const { songs }: { songs: SongRecommendation[] } = body;
-
-    if (!songs || !Array.isArray(songs) || songs.length === 0) {
-      return NextResponse.json(
-        { error: "No songs provided for download" },
-        { status: 400 }
-      );
-    }
-
-    // Create temp directory
-    tempDir = path.join(os.tmpdir(), `musicnoweasy-${uuidv4()}`);
-    fs.mkdirSync(tempDir, { recursive: true });
-
-    const downloadResults: { filePath: string; zipName: string }[] = [];
-    const errors: string[] = [];
-
-    // Process songs concurrently with a worker pool (limit = 3) to optimize speed
-    const queue = [...songs];
-    const concurrency = 3;
-    const workers = Array.from({ length: concurrency }, async () => {
-      while (queue.length > 0) {
-        const song = queue.shift();
-        if (!song) break;
-
-        try {
-          // 1. Find video ID on YouTube
-          const ytResult = await searchYouTubeVideoId(song.searchQuery);
-          if (!ytResult) {
-            errors.push(`Could not find "${song.title}" on YouTube`);
-            continue;
-          }
-
-          // 2. Download the audio
-          const result = await downloadSong(
-            ytResult.videoId,
-            `${song.title} - ${song.artist}`,
-            tempDir!
-          );
-
-          if (result.success && result.filePath) {
-            downloadResults.push({
-              filePath: result.filePath,
-              zipName: sanitizeFileName(`${song.title} - ${song.artist}.mp3`),
-            });
-          } else {
-            errors.push(
-              `Failed to download "${song.title}": ${result.error}`
-            );
-          }
-        } catch (err: unknown) {
-          const e = err as Error;
-          errors.push(`Error processing "${song.title}": ${e.message}`);
-        }
-      }
-    });
-
-    await Promise.all(workers);
-
-
-    if (downloadResults.length === 0) {
-      return NextResponse.json(
-        {
-          error: `All downloads failed. Errors: ${errors.join("; ")}`,
-        },
-        { status: 500 }
-      );
-    }
-
-    // 3. Create ZIP
-    const zipBuffer = await createMp3Zip(downloadResults);
-
-    // 4. Cleanup temp files
-    try {
-      fs.rmSync(tempDir, { recursive: true, force: true });
-      tempDir = null;
-    } catch {
-      // Non-critical cleanup failure
-    }
-
-    // 5. Stream ZIP to client
-    const successCount = downloadResults.length;
-    const zipName = `MusicNowEasy-${successCount}-songs.zip`;
-
-    return new NextResponse(new Uint8Array(zipBuffer), {
-      status: 200,
-      headers: {
-        "Content-Type": "application/zip",
-        "Content-Disposition": `attachment; filename="${zipName}"`,
-        "Content-Length": zipBuffer.length.toString(),
-        "X-Songs-Downloaded": successCount.toString(),
-        "X-Songs-Failed": errors.length.toString(),
-      },
-    });
-  } catch (error: unknown) {
-    const err = error as Error;
-    console.error("Download API error:", err);
-
-    // Cleanup on error
-    if (tempDir) {
-      try {
-        fs.rmSync(tempDir, { recursive: true, force: true });
-      } catch {
-        // ignore
-      }
-    }
-
+  // Pre-flight: ensure yt-dlp is available before starting the stream
+  const { ytdlp } = await checkYtdlp();
+  if (!ytdlp) {
     return NextResponse.json(
-      { error: err.message || "Download failed" },
-      { status: 500 }
+      { error: "yt-dlp binary not available. Check deployment logs." },
+      { status: 503 }
     );
   }
+
+  let body: { songs: SongRecommendation[] };
+  try {
+    body = await request.json();
+  } catch {
+    return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
+  }
+
+  const { songs } = body;
+  if (!songs || !Array.isArray(songs) || songs.length === 0) {
+    return NextResponse.json({ error: "No songs provided." }, { status: 400 });
+  }
+
+  const tempDir = path.join(os.tmpdir(), `mne-${uuidv4()}`);
+  fs.mkdirSync(tempDir, { recursive: true });
+
+  // ── Streaming ZIP setup ───────────────────────────────────────────────────
+  // level: 0 = store mode (no compression).
+  // Audio files (M4A, WebM) are already compressed — applying zlib wastes CPU
+  // and barely shrinks the file. Store mode is 5-10× faster for ZIP creation.
+  const archive   = new ZipArchive({ zlib: { level: 0 } });
+  const passthrough = new PassThrough();
+  archive.pipe(passthrough);
+
+  const webStream = toWebStream(passthrough);
+
+  // ── Background processing (runs concurrently with the HTTP stream) ────────
+  const concurrency = adaptiveConcurrency(songs.length);
+  const semaphore   = new Semaphore(concurrency);
+
+  const processSongs = async () => {
+    const tasks = songs.map(async (song) => {
+      await semaphore.acquire();
+      try {
+        const result = await downloadSong(
+          song.searchQuery,
+          `${song.title} - ${song.artist}`,
+          tempDir
+        );
+        if (result.success && result.filePath && fs.existsSync(result.filePath)) {
+          const ext     = result.fileExt ?? ".m4a";
+          const zipName = `${sanitize(song.title)} - ${sanitize(song.artist)}${ext}`;
+          archive.file(result.filePath, { name: zipName });
+        }
+      } finally {
+        semaphore.release();
+      }
+    });
+
+    await Promise.all(tasks);
+    await archive.finalize();
+
+    // Deferred cleanup — give the stream time to finish flushing
+    setTimeout(() => {
+      try { fs.rmSync(tempDir, { recursive: true, force: true }); } catch {}
+    }, 10_000);
+  };
+
+  // Fire-and-forget — the stream stays open until archive.finalize() closes it
+  processSongs().catch((err) => {
+    console.error("[download] Processing error:", err);
+    archive.destroy(err as Error);
+  });
+
+  const zipFilename = `MusicNowEasy-${songs.length}-songs.zip`;
+
+  return new NextResponse(webStream as unknown as ReadableStream, {
+    status: 200,
+    headers: {
+      "Content-Type": "application/zip",
+      "Content-Disposition": `attachment; filename="${zipFilename}"`,
+      "Transfer-Encoding": "chunked",
+      "X-Song-Count": songs.length.toString(),
+      "Cache-Control": "no-store",
+    },
+  });
 }

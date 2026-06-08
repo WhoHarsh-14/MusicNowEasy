@@ -1,195 +1,208 @@
 import path from "path";
 import fs from "fs";
-import os from "os";
+import https from "https";
 import ffmpegPath from "ffmpeg-static";
 import { create as createYoutubeDl } from "yt-dlp-exec";
 
 export interface DownloadResult {
   success: boolean;
   filePath?: string;
+  fileExt?: string;
   error?: string;
   title: string;
 }
 
-async function getExecutablePaths(): Promise<{
-  ytdlpPath: string;
-  ffmpegPath: string;
-  ffmpegDir: string;
-}> {
-  let ffmpegBin = ffmpegPath || "";
-  let ytdlpBin = "";
+// ── Binary helpers ────────────────────────────────────────────────────────────
 
-  const isWin = process.platform === "win32";
-
-  ytdlpBin = path.join(
-    process.cwd(),
-    "node_modules",
-    "yt-dlp-exec",
-    "bin",
-    isWin ? "yt-dlp.exe" : "yt-dlp"
-  );
-
-  // On Linux (e.g. Vercel), copy binaries to /tmp and chmod to executable
-  if (process.platform === "linux") {
-    const tmpFfmpegPath = path.join("/tmp", "ffmpeg");
-    const tmpYtdlpPath = path.join("/tmp", "yt-dlp");
-
-    // Copy ffmpeg if not exists in /tmp
-    if (!fs.existsSync(tmpFfmpegPath) && ffmpegBin && fs.existsSync(ffmpegBin)) {
-      try {
-        fs.copyFileSync(ffmpegBin, tmpFfmpegPath);
-        fs.chmodSync(tmpFfmpegPath, 0o755);
-      } catch (err) {
-        console.error("Failed to copy/chmod ffmpeg to /tmp:", err);
-      }
-    }
-    if (fs.existsSync(tmpFfmpegPath)) {
-      ffmpegBin = tmpFfmpegPath;
-    }
-
-    // Copy yt-dlp if not exists in /tmp
-    if (!fs.existsSync(tmpYtdlpPath) && ytdlpBin && fs.existsSync(ytdlpBin)) {
-      try {
-        fs.copyFileSync(ytdlpBin, tmpYtdlpPath);
-        fs.chmodSync(tmpYtdlpPath, 0o755);
-      } catch (err) {
-        console.error("Failed to copy/chmod yt-dlp to /tmp:", err);
-      }
-    }
-    if (fs.existsSync(tmpYtdlpPath)) {
-      ytdlpBin = tmpYtdlpPath;
-    }
-  }
-
-  return {
-    ytdlpPath: ytdlpBin,
-    ffmpegPath: ffmpegBin,
-    ffmpegDir: path.dirname(ffmpegBin),
-  };
+function fetchBinary(url: string, dest: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const file = fs.createWriteStream(dest);
+    const follow = (target: string) => {
+      https
+        .get(target, (res) => {
+          if (res.statusCode === 301 || res.statusCode === 302) {
+            file.close();
+            return follow(res.headers.location!);
+          }
+          if (res.statusCode !== 200) {
+            file.close();
+            fs.unlink(dest, () => {});
+            return reject(new Error(`HTTP ${res.statusCode} downloading binary`));
+          }
+          res.pipe(file);
+          file.on("finish", () => { file.close(); resolve(); });
+        })
+        .on("error", (err) => { file.close(); fs.unlink(dest, () => {}); reject(err); });
+    };
+    follow(url);
+  });
 }
 
-export async function downloadSong(
-  videoId: string,
-  songTitle: string,
-  outputDir: string
-): Promise<DownloadResult> {
-  const { ytdlpPath, ffmpegPath: resolvedFfmpegPath, ffmpegDir } = await getExecutablePaths();
+let ytdlpDownloadPromise: Promise<void> | null = null;
 
-  if (!resolvedFfmpegPath || !fs.existsSync(resolvedFfmpegPath)) {
-    return {
-      success: false,
-      error: "ffmpeg binary path is not available.",
-      title: songTitle,
-    };
+async function ensureYtdlpLinux(dest: string): Promise<void> {
+  if (fs.existsSync(dest)) return;
+
+  if (!ytdlpDownloadPromise) {
+    ytdlpDownloadPromise = (async () => {
+      console.log("[yt-dlp] Downloading standalone Linux binary…");
+      const tmp = `${dest}.tmp`;
+      try {
+        await fetchBinary(
+          "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_linux",
+          tmp
+        );
+        fs.renameSync(tmp, dest);
+        fs.chmodSync(dest, 0o755);
+        console.log("[yt-dlp] Binary ready.");
+      } catch (err) {
+        ytdlpDownloadPromise = null;
+        if (fs.existsSync(tmp)) try { fs.unlinkSync(tmp); } catch {}
+        throw err;
+      }
+    })();
   }
+  return ytdlpDownloadPromise;
+}
+
+async function getExecutablePaths(): Promise<{
+  ytdlpPath: string;
+  ffmpegBin: string;
+  ffmpegDir: string;
+}> {
+  const isWin = process.platform === "win32";
+  let ytdlpBin = path.join(
+    process.cwd(), "node_modules", "yt-dlp-exec", "bin",
+    isWin ? "yt-dlp.exe" : "yt-dlp"
+  );
+  let ffmpegBin = ffmpegPath || "";
+
+  if (process.platform === "linux") {
+    const tmpFfmpeg = "/tmp/ffmpeg";
+    const tmpYtdlp  = "/tmp/yt-dlp";
+
+    // ffmpeg — copy from static package
+    if (!fs.existsSync(tmpFfmpeg) && ffmpegBin && fs.existsSync(ffmpegBin)) {
+      try { fs.copyFileSync(ffmpegBin, tmpFfmpeg); fs.chmodSync(tmpFfmpeg, 0o755); } catch {}
+    }
+    if (fs.existsSync(tmpFfmpeg)) ffmpegBin = tmpFfmpeg;
+
+    // yt-dlp — download standalone binary (no Python dependency)
+    try {
+      await ensureYtdlpLinux(tmpYtdlp);
+      ytdlpBin = tmpYtdlp;
+    } catch {
+      // fallback: copy zipapp binary and hope Python is available
+      if (!fs.existsSync(tmpYtdlp) && fs.existsSync(ytdlpBin)) {
+        try { fs.copyFileSync(ytdlpBin, tmpYtdlp); fs.chmodSync(tmpYtdlp, 0o755); } catch {}
+      }
+      if (fs.existsSync(tmpYtdlp)) ytdlpBin = tmpYtdlp;
+    }
+  }
+
+  return { ytdlpPath: ytdlpBin, ffmpegBin, ffmpegDir: path.dirname(ffmpegBin) };
+}
+
+// ── Audio extensions we'll accept ────────────────────────────────────────────
+const AUDIO_EXTS = [".m4a", ".aac", ".webm", ".opus", ".mp3", ".ogg"];
+
+// ── Main download function ────────────────────────────────────────────────────
+/**
+ * Downloads audio for `searchQuery` using yt-dlp's built-in search
+ * (ytsearch1:), removing the YouTube Data API dependency.
+ * Prefers M4A / AAC (no re-encoding) for maximum speed.
+ */
+export async function downloadSong(
+  searchQuery: string,
+  songTitle: string,
+  outputDir: string,
+  timeoutMs = 55_000
+): Promise<DownloadResult> {
+  const { ytdlpPath, ffmpegBin, ffmpegDir } = await getExecutablePaths();
 
   if (!ytdlpPath || !fs.existsSync(ytdlpPath)) {
-    return {
-      success: false,
-      error: "yt-dlp binary path is not available.",
-      title: songTitle,
-    };
+    return { success: false, error: "yt-dlp binary not found.", title: songTitle };
   }
 
-  const url = `https://www.youtube.com/watch?v=${videoId}`;
-  // Sanitize title for filename
+  // Sanitise for filesystem
   const safeTitle = songTitle
-    .replace(/[<>:"/\\|?*]/g, "")
+    .replace(/[<>:"/\\|?*\x00-\x1f]/g, "")
     .replace(/\s+/g, "_")
-    .substring(0, 100);
+    .substring(0, 70);
 
-  const outputTemplate = path.join(outputDir, `${safeTitle}.%(ext)s`);
-  const expectedMp3 = path.join(outputDir, `${safeTitle}.mp3`);
+  // Per-song sub-directory avoids filename collisions under concurrency
+  const songDir = path.join(outputDir, safeTitle);
+  fs.mkdirSync(songDir, { recursive: true });
+  const outputTemplate = path.join(songDir, "audio.%(ext)s");
 
   try {
     const youtubedl = createYoutubeDl(ytdlpPath);
-    await youtubedl(url, {
-      extractAudio: true,
-      audioFormat: "mp3",
-      audioQuality: 0,
-      output: outputTemplate,
-      noPlaylist: true,
-      embedThumbnail: true,
-      addMetadata: true,
-      noWarnings: true,
-      quiet: true,
-      ffmpegLocation: ffmpegDir,
-    });
 
-    if (fs.existsSync(expectedMp3)) {
-      return { success: true, filePath: expectedMp3, title: songTitle };
-    }
+    // Race the download against a hard timeout
+    await Promise.race([
+      youtubedl(`ytsearch1:${searchQuery}`, {
+        // Download best native M4A/AAC directly — no ffmpeg transcode needed.
+        // Falls back to webm/opus (also container-copy, no transcode).
+        format: "bestaudio[ext=m4a]/bestaudio[ext=aac]/bestaudio",
+        output: outputTemplate,
+        noPlaylist: true,
+        noWarnings: true,
+        quiet: true,
+        ...(ffmpegBin && fs.existsSync(ffmpegBin) ? { ffmpegLocation: ffmpegDir } : {}),
+      }),
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error(`Timed out after ${timeoutMs / 1000}s`)), timeoutMs)
+      ),
+    ]);
 
-    // Search for any mp3 with a similar name
-    const files = fs.readdirSync(outputDir);
-    const mp3File = files.find(
-      (f) => f.endsWith(".mp3") && f.includes(safeTitle.substring(0, 10))
+    // Locate the downloaded file
+    const files = fs.readdirSync(songDir);
+    const audioFile = files.find((f) =>
+      AUDIO_EXTS.some((ext) => f.toLowerCase().endsWith(ext))
     );
-    if (mp3File) {
+
+    if (audioFile) {
       return {
         success: true,
-        filePath: path.join(outputDir, mp3File),
+        filePath: path.join(songDir, audioFile),
+        fileExt: path.extname(audioFile),
         title: songTitle,
       };
     }
 
+    return { success: false, error: "No audio file found after download.", title: songTitle };
+  } catch (err) {
     return {
       success: false,
-      error: "MP3 file not found after download",
-      title: songTitle,
-    };
-  } catch (error: unknown) {
-    const err = error as Error;
-    return {
-      success: false,
-      error: err.message || "Unknown download error",
+      error: (err as Error).message || "Unknown download error",
       title: songTitle,
     };
   }
 }
 
+// ── Health check ─────────────────────────────────────────────────────────────
 let cachedHealth: { ytdlp: boolean; ffmpeg: boolean } | null = null;
 
-export async function checkYtdlp(): Promise<{
-  ytdlp: boolean;
-  ffmpeg: boolean;
-}> {
-  if (cachedHealth && cachedHealth.ytdlp && cachedHealth.ffmpeg) {
-    return cachedHealth;
-  }
+export async function checkYtdlp(): Promise<{ ytdlp: boolean; ffmpeg: boolean }> {
+  if (cachedHealth?.ytdlp && cachedHealth?.ffmpeg) return cachedHealth;
 
   try {
-    const { ytdlpPath, ffmpegPath: resolvedFfmpegPath } = await getExecutablePaths();
+    const { ytdlpPath, ffmpegBin } = await getExecutablePaths();
+    const ffmpegOk = typeof ffmpegBin === "string" && fs.existsSync(ffmpegBin);
 
-    // 1. Check if ffmpeg-static path exists
-    const ffmpegExists = typeof resolvedFfmpegPath === "string" && fs.existsSync(resolvedFfmpegPath);
-
-    // 2. Check if yt-dlp-exec is functional by executing version check
-    let ytdlpExists = false;
+    let ytdlpOk = false;
     try {
-      const youtubedl = createYoutubeDl(ytdlpPath);
-      await youtubedl("", { version: true });
-      ytdlpExists = true;
-    } catch (err) {
-      console.error("Health check: yt-dlp-exec version check failed:", err);
+      const ydl = createYoutubeDl(ytdlpPath);
+      await ydl("", { version: true });
+      ytdlpOk = true;
+    } catch (e) {
+      console.warn("[health] yt-dlp version check failed:", (e as Error).message);
     }
 
-    const result = {
-      ytdlp: ytdlpExists,
-      ffmpeg: ffmpegExists,
-    };
-
-    if (result.ytdlp && result.ffmpeg) {
-      cachedHealth = result;
-    }
-
+    const result = { ytdlp: ytdlpOk, ffmpeg: ffmpegOk };
+    if (result.ytdlp && result.ffmpeg) cachedHealth = result;
     return result;
-  } catch (err) {
-    console.error("Health check failed:", err);
-    return {
-      ytdlp: false,
-      ffmpeg: false,
-    };
+  } catch {
+    return { ytdlp: false, ffmpeg: false };
   }
 }
-

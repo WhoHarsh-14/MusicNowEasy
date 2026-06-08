@@ -4,7 +4,7 @@ import { getSongRecommendations } from "@/lib/gemini";
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { prompt, count = 5 } = body;
+    const { prompt, count = 5, quiz } = body;
 
     if (!prompt || typeof prompt !== "string" || prompt.trim().length === 0) {
       return NextResponse.json(
@@ -23,8 +23,9 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const clampedCount = Math.min(Math.max(Number(count) || 5, 1), 30);
-    const songs = await getSongRecommendations(prompt.trim(), clampedCount);
+    // Remove cap of 30 songs (allow higher numbers as requested)
+    const requestCount = Math.max(Number(count) || 5, 1);
+    const songs = await getSongRecommendations(prompt.trim(), requestCount, quiz);
 
     return NextResponse.json({ songs });
   } catch (error: unknown) {
