@@ -1,6 +1,7 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
+  serverExternalPackages: ["ffmpeg-static", "yt-dlp-exec"],
   // Allow longer API response time for download route (up to 5 minutes)
   experimental: {
     serverActions: {

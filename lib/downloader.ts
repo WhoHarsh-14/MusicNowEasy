@@ -1,67 +1,8 @@
-import { execFile } from "child_process";
-import { promisify } from "util";
 import path from "path";
 import fs from "fs";
 import os from "os";
-
-const execFileAsync = promisify(execFile);
-
-// Common locations winget installs CLI tools on Windows
-const WINGET_LINKS = path.join(
-  os.homedir(),
-  "AppData",
-  "Local",
-  "Microsoft",
-  "WinGet",
-  "Links"
-);
-
-const PROGRAM_FILES_LINKS = [
-  path.join("C:", "Program Files", "yt-dlp"),
-  path.join("C:", "Program Files (x86)", "yt-dlp"),
-];
-
-/** Find the actual path of a binary, checking PATH then winget fallbacks */
-async function resolveBinary(name: string): Promise<string | null> {
-  // 1. Try directly (relies on PATH)
-  try {
-    await execFileAsync(name, ["--version"], { timeout: 5000 });
-    return name;
-  } catch {
-    // not on PATH yet
-  }
-
-  // 2. Check winget links directory (where winget puts CLI aliases)
-  const candidates = [
-    path.join(WINGET_LINKS, `${name}.exe`),
-    path.join(WINGET_LINKS, name),
-    ...PROGRAM_FILES_LINKS.map((p) => path.join(p, `${name}.exe`)),
-  ];
-
-  for (const candidate of candidates) {
-    if (fs.existsSync(candidate)) {
-      try {
-        await execFileAsync(candidate, ["--version"], { timeout: 5000 });
-        return candidate;
-      } catch {
-        // binary exists but can't run
-      }
-    }
-  }
-
-  // 3. Try where.exe (Windows) to locate the binary
-  try {
-    const { stdout } = await execFileAsync("where.exe", [name], {
-      timeout: 5000,
-    });
-    const resolved = stdout.trim().split("\n")[0].trim();
-    if (resolved) return resolved;
-  } catch {
-    // where.exe also failed
-  }
-
-  return null;
-}
+import ffmpegPath from "ffmpeg-static";
+import { create as createYoutubeDl } from "yt-dlp-exec";
 
 export interface DownloadResult {
   success: boolean;
@@ -70,16 +11,82 @@ export interface DownloadResult {
   title: string;
 }
 
+async function getExecutablePaths(): Promise<{
+  ytdlpPath: string;
+  ffmpegPath: string;
+  ffmpegDir: string;
+}> {
+  let ffmpegBin = ffmpegPath || "";
+  let ytdlpBin = "";
+
+  const isWin = process.platform === "win32";
+
+  ytdlpBin = path.join(
+    process.cwd(),
+    "node_modules",
+    "yt-dlp-exec",
+    "bin",
+    isWin ? "yt-dlp.exe" : "yt-dlp"
+  );
+
+  // On Linux (e.g. Vercel), copy binaries to /tmp and chmod to executable
+  if (process.platform === "linux") {
+    const tmpFfmpegPath = path.join("/tmp", "ffmpeg");
+    const tmpYtdlpPath = path.join("/tmp", "yt-dlp");
+
+    // Copy ffmpeg if not exists in /tmp
+    if (!fs.existsSync(tmpFfmpegPath) && ffmpegBin && fs.existsSync(ffmpegBin)) {
+      try {
+        fs.copyFileSync(ffmpegBin, tmpFfmpegPath);
+        fs.chmodSync(tmpFfmpegPath, 0o755);
+      } catch (err) {
+        console.error("Failed to copy/chmod ffmpeg to /tmp:", err);
+      }
+    }
+    if (fs.existsSync(tmpFfmpegPath)) {
+      ffmpegBin = tmpFfmpegPath;
+    }
+
+    // Copy yt-dlp if not exists in /tmp
+    if (!fs.existsSync(tmpYtdlpPath) && ytdlpBin && fs.existsSync(ytdlpBin)) {
+      try {
+        fs.copyFileSync(ytdlpBin, tmpYtdlpPath);
+        fs.chmodSync(tmpYtdlpPath, 0o755);
+      } catch (err) {
+        console.error("Failed to copy/chmod yt-dlp to /tmp:", err);
+      }
+    }
+    if (fs.existsSync(tmpYtdlpPath)) {
+      ytdlpBin = tmpYtdlpPath;
+    }
+  }
+
+  return {
+    ytdlpPath: ytdlpBin,
+    ffmpegPath: ffmpegBin,
+    ffmpegDir: path.dirname(ffmpegBin),
+  };
+}
+
 export async function downloadSong(
   videoId: string,
   songTitle: string,
   outputDir: string
 ): Promise<DownloadResult> {
-  const ytdlpPath = await resolveBinary("yt-dlp");
-  if (!ytdlpPath) {
+  const { ytdlpPath, ffmpegPath: resolvedFfmpegPath, ffmpegDir } = await getExecutablePaths();
+
+  if (!resolvedFfmpegPath || !fs.existsSync(resolvedFfmpegPath)) {
     return {
       success: false,
-      error: "yt-dlp not found. Run: winget install yt-dlp.yt-dlp",
+      error: "ffmpeg binary path is not available.",
+      title: songTitle,
+    };
+  }
+
+  if (!ytdlpPath || !fs.existsSync(ytdlpPath)) {
+    return {
+      success: false,
+      error: "yt-dlp binary path is not available.",
       title: songTitle,
     };
   }
@@ -95,22 +102,19 @@ export async function downloadSong(
   const expectedMp3 = path.join(outputDir, `${safeTitle}.mp3`);
 
   try {
-    await execFileAsync(
-      ytdlpPath,
-      [
-        url,
-        "-x",
-        "--audio-format", "mp3",
-        "--audio-quality", "0",
-        "-o", outputTemplate,
-        "--no-playlist",
-        "--embed-thumbnail",
-        "--add-metadata",
-        "--no-warnings",
-        "--quiet",
-      ],
-      { timeout: 120000 }
-    );
+    const youtubedl = createYoutubeDl(ytdlpPath);
+    await youtubedl(url, {
+      extractAudio: true,
+      audioFormat: "mp3",
+      audioQuality: 0,
+      output: outputTemplate,
+      noPlaylist: true,
+      embedThumbnail: true,
+      addMetadata: true,
+      noWarnings: true,
+      quiet: true,
+      ffmpegLocation: ffmpegDir,
+    });
 
     if (fs.existsSync(expectedMp3)) {
       return { success: true, filePath: expectedMp3, title: songTitle };
@@ -148,9 +152,31 @@ export async function checkYtdlp(): Promise<{
   ytdlp: boolean;
   ffmpeg: boolean;
 }> {
-  const [ytdlpPath, ffmpegPath] = await Promise.all([
-    resolveBinary("yt-dlp"),
-    resolveBinary("ffmpeg"),
-  ]);
-  return { ytdlp: !!ytdlpPath, ffmpeg: !!ffmpegPath };
+  try {
+    const { ytdlpPath, ffmpegPath: resolvedFfmpegPath } = await getExecutablePaths();
+
+    // 1. Check if ffmpeg-static path exists
+    const ffmpegExists = typeof resolvedFfmpegPath === "string" && fs.existsSync(resolvedFfmpegPath);
+
+    // 2. Check if yt-dlp-exec is functional by executing version check
+    let ytdlpExists = false;
+    try {
+      const youtubedl = createYoutubeDl(ytdlpPath);
+      await youtubedl("", { version: true });
+      ytdlpExists = true;
+    } catch (err) {
+      console.error("Health check: yt-dlp-exec version check failed:", err);
+    }
+
+    return {
+      ytdlp: ytdlpExists,
+      ffmpeg: ffmpegExists,
+    };
+  } catch (err) {
+    console.error("Health check failed:", err);
+    return {
+      ytdlp: false,
+      ffmpeg: false,
+    };
+  }
 }

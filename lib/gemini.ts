@@ -34,10 +34,25 @@ async function generateWithFallback(prompt: string): Promise<string> {
       const msg = e.message || "";
       const is404 = msg.includes("404") || msg.includes("not found");
       const is429 = msg.includes("429") || msg.includes("quota") || msg.includes("Too Many Requests");
+      const is503 = msg.includes("503") || msg.includes("Service Unavailable") || msg.includes("demand") || msg.includes("overloaded") || msg.includes("temporary");
+      const is500 = msg.includes("500") || msg.includes("Internal Error") || msg.includes("Internal Server Error");
+      const is502 = msg.includes("502") || msg.includes("Bad Gateway");
+      const is504 = msg.includes("504") || msg.includes("Gateway Timeout");
 
-      if (is404 || is429) {
+      const isTransient =
+        is404 ||
+        is429 ||
+        is503 ||
+        is500 ||
+        is502 ||
+        is504 ||
+        (e.status !== undefined && (e.status === 404 || e.status === 429 || e.status >= 500));
+
+      if (isTransient) {
         // Try next model
-        console.warn(`Model ${modelName} unavailable (${is404 ? "404" : "429"}), trying next...`);
+        console.warn(
+          `Model ${modelName} unavailable (status: ${e.status ?? "unknown"}, error: ${msg}), trying next...`
+        );
         continue;
       }
 

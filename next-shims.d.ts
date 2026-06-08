@@ -65,3 +65,16 @@ declare module "next/server" {
     static json(body: unknown, init?: ResponseInit): NextResponse;
   }
 }
+
+declare module "ffmpeg-static" {
+  const path: string | null;
+  export default path;
+}
+
+declare module "yt-dlp-exec" {
+  export interface Options {
+    [key: string]: any;
+  }
+  function youtubedl(url: string, options?: Options): Promise<any>;
+  export default youtubedl;
+}
