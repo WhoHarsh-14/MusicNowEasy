@@ -44,7 +44,13 @@ cd MusicNowEasy
 npm install
 ```
 
-### 4. Setup Environment Variables
+### 4. Download yt-dlp Binary
+Because `yt-dlp.exe` is a large binary file, it is excluded from GitHub (`.gitignore`). You must manually download it for the audio streaming to work:
+1. Go to the [yt-dlp GitHub Releases page](https://github.com/yt-dlp/yt-dlp/releases).
+2. Download `yt-dlp.exe`.
+3. Place `yt-dlp.exe` directly into the root directory of this project (`MusicNowEasy/yt-dlp.exe`).
+
+### 5. Setup Environment Variables
 Create a `.env` file in the root of your project and configure the following keys:
 ```env
 GROQ_API_KEY=your_groq_api_key
@@ -55,7 +61,7 @@ DATABASE_URL=your_prisma_database_url
 COBALT_URL=your_cobalt_url
 ```
 
-### 5. Run in Development Mode
+### 6. Run in Development Mode
 To start the Next.js development server:
 ```bash
 npm run dev
