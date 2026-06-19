@@ -25,6 +25,8 @@ export default function CatalogueDetailPage({ params }: { params: Promise<{ id: 
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [progress, setProgress] = useState<DownloadProgress | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
+  const [customLimit, setCustomLimit] = useState<number>(50);
+  const hasAppended = useRef(false);
 
   useEffect(() => {
     setMounted(true);
@@ -33,9 +35,11 @@ export default function CatalogueDetailPage({ params }: { params: Promise<{ id: 
   // When AI finishes curating, auto-save to the store!
   useEffect(() => {
     if (status === 'done' && aiSongs.length > 0) {
-      updateCollectionSongs(id, aiSongs);
+      const newSongs = hasAppended.current ? [...(collection?.songs || []), ...aiSongs] : aiSongs;
+      updateCollectionSongs(id, newSongs);
+      hasAppended.current = false;
     }
-  }, [status, aiSongs, id, updateCollectionSongs]);
+  }, [status, aiSongs, id, updateCollectionSongs, collection?.songs]);
 
   if (!mounted) return null;
 
@@ -48,12 +52,19 @@ export default function CatalogueDetailPage({ params }: { params: Promise<{ id: 
     );
   }
 
-  const activeSongs = collection.songs && collection.songs.length > 0 ? collection.songs : aiSongs;
+  const baseSongs = collection?.songs || [];
+  const isCurating = status === 'curating';
+  const activeSongs = isCurating 
+    ? (hasAppended.current ? [...baseSongs, ...aiSongs] : aiSongs)
+    : (baseSongs.length > 0 ? baseSongs : aiSongs);
+    
   const isFilled = activeSongs.length > 0;
 
-  const handleMagicFill = () => {
-    // Generate 20 tracks based on the category title to fill it up
-    curate(`${collection.title} essentials, top hits`, 20);
+  const handleMagicFill = (append = false) => {
+    hasAppended.current = append;
+    const excludeList = append ? baseSongs.map(s => `${s.title} by ${s.artist}`) : [];
+    const count = append ? 50 : customLimit;
+    curate(`${collection.title} essentials, top hits`, count, false, false, excludeList);
   };
 
   const handleDownload = async () => {
@@ -121,17 +132,27 @@ export default function CatalogueDetailPage({ params }: { params: Promise<{ id: 
         </div>
         
         {isFilled && (
-          <button 
-            onClick={handleDownload}
-            disabled={isDownloading}
-            className="shrink-0 bg-primary text-on-primary h-14 px-8 rounded-lg font-body font-bold flex items-center justify-center gap-2 hover:bg-primary-container transition-all active:scale-[0.98] gold-glow disabled:opacity-50"
-          >
-            {isDownloading ? (
-              <><span className="material-symbols-outlined animate-spin">sync</span> Preparing...</>
-            ) : (
-              <><span className="material-symbols-outlined">download</span> DOWNLOAD ZIP</>
-            )}
-          </button>
+          <div className="flex gap-4">
+            <button 
+              onClick={() => handleMagicFill(true)}
+              disabled={isCurating}
+              className="shrink-0 bg-surface-container-highest border border-border text-text-primary h-14 px-6 rounded-lg font-body font-bold flex items-center justify-center gap-2 hover:border-primary hover:text-primary transition-all active:scale-[0.98] disabled:opacity-50"
+            >
+              <span className="material-symbols-outlined">magic_button</span>
+              MORE MAGIC FILL (+50)
+            </button>
+            <button 
+              onClick={handleDownload}
+              disabled={isDownloading || isCurating}
+              className="shrink-0 bg-primary text-on-primary h-14 px-8 rounded-lg font-body font-bold flex items-center justify-center gap-2 hover:bg-primary-container transition-all active:scale-[0.98] gold-glow disabled:opacity-50"
+            >
+              {isDownloading ? (
+                <><span className="material-symbols-outlined animate-spin">sync</span> Preparing...</>
+              ) : (
+                <><span className="material-symbols-outlined">download</span> DOWNLOAD ZIP</>
+              )}
+            </button>
+          </div>
         )}
       </div>
 
@@ -143,13 +164,26 @@ export default function CatalogueDetailPage({ params }: { params: Promise<{ id: 
           </div>
           <h3 className="font-display text-2xl font-bold text-text-primary mb-2">Category Not Cached</h3>
           <p className="font-body text-text-secondary mb-8">This is a default library category. To download it, we first need to extract and cache the actual tracks.</p>
-          <button 
-            onClick={handleMagicFill}
-            className="bg-surface-container-highest border border-border-strong text-text-primary h-12 px-8 rounded-lg font-body font-bold flex items-center justify-center gap-2 hover:border-primary transition-all active:scale-[0.98]"
-          >
-            <span className="material-symbols-outlined text-primary">magic_button</span>
-            MAGIC FILL (Extract Top 20)
-          </button>
+          <div className="flex items-center gap-4">
+            <div className="flex flex-col items-start gap-1">
+              <label className="text-xs font-label text-text-tertiary uppercase tracking-widest">Amount</label>
+              <input 
+                type="number" 
+                min="20" 
+                max="150" 
+                value={customLimit}
+                onChange={(e) => setCustomLimit(Math.min(150, Math.max(20, parseInt(e.target.value) || 50)))}
+                className="bg-surface-container-highest border border-border text-text-primary h-12 w-24 rounded-lg font-body text-center focus:border-primary focus:outline-none transition-colors"
+              />
+            </div>
+            <button 
+              onClick={() => handleMagicFill(false)}
+              className="mt-5 bg-surface-container-highest border border-border-strong text-text-primary h-12 px-8 rounded-lg font-body font-bold flex items-center justify-center gap-2 hover:border-primary transition-all active:scale-[0.98]"
+            >
+              <span className="material-symbols-outlined text-primary">magic_button</span>
+              MAGIC FILL
+            </button>
+          </div>
         </div>
       )}
 

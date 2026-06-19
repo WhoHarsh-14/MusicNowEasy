@@ -8,7 +8,7 @@ import { CurateStage, Song, RawSong } from '@/types';
 export const runtime = 'nodejs';
 export const maxDuration = 60;
 
-const BATCH_SIZE = 10;
+const BATCH_SIZE = 50;
 
 // Simple semaphore — limits concurrent Gemini calls to MAX_CONCURRENT
 function createSemaphore(max: number) {
@@ -26,9 +26,19 @@ function createSemaphore(max: number) {
   };
 }
 
-export async function GET(req: NextRequest) {
-  const query = req.nextUrl.searchParams.get('q') ?? '';
-  const count = Math.min(parseInt(req.nextUrl.searchParams.get('n') ?? '20'), 200);
+export async function POST(req: NextRequest) {
+  let query = '';
+  let count = 20;
+  let clientExclude: string[] = [];
+
+  try {
+    const body = await req.json();
+    query = body.q || body.query || '';
+    count = Math.min(parseInt(body.n || body.count || '20'), 150);
+    clientExclude = Array.isArray(body.exclude) ? body.exclude : [];
+  } catch (e) {
+    return new Response('Invalid JSON body', { status: 400 });
+  }
 
   if (!query.trim()) {
     return new Response('Missing query', { status: 400 });
@@ -101,7 +111,7 @@ export async function GET(req: NextRequest) {
         // Wall time ≈ ceil(numBatches / 3) × ~5s   e.g. 10 batches → ~20s
         const numBatches = Math.ceil(count / BATCH_SIZE);
         const batchPromises = Array.from({ length: numBatches }, () =>
-          groqSlot(() => collectGroqSongs(query, BATCH_SIZE))
+          groqSlot(() => collectGroqSongs(query, BATCH_SIZE, clientExclude))
         );
 
         // As each batch resolves, immediately enrich + SSE emit its songs
@@ -116,7 +126,7 @@ export async function GET(req: NextRequest) {
         // If deduplication reduced the count, request exact missing amount
         const missing = count - resolvedSongs.length;
         if (missing > 0 && !req.signal.aborted) {
-          const excludeList = resolvedSongs.map((s) => `${s.title} by ${s.artist}`);
+          const excludeList = [...clientExclude, ...resolvedSongs.map((s) => `${s.title} by ${s.artist}`)];
           const fillSongs = await collectGroqSongs(query, missing, excludeList);
           await Promise.all(fillSongs.map((song) => enrichAndSend(song, token)));
         }
