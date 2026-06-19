@@ -1,31 +1,76 @@
 {
-  "name": "musicnoweasy",
+  "name": "jainnythedj",
   "version": "0.1.0",
   "private": true,
+  "main": "main.js",
   "scripts": {
     "dev": "node node_modules/next/dist/bin/next dev",
     "build": "node node_modules/next/dist/bin/next build",
-    "start": "node node_modules/next/dist/bin/next start"
+    "start": "node node_modules/next/dist/bin/next start",
+    "dev:desktop": "cross-env NODE_ENV=development concurrently \"npm run dev\" \"wait-on http://localhost:3000 && electron .\"",
+    "postbuild": "node scripts/fix-symlinks.js && shx mkdir -p .next/standalone/public .next/standalone/.next/static && shx cp -r public/* .next/standalone/public/ && shx cp -r .next/static/* .next/standalone/.next/static/",
+    "build:desktop": "shx rm -rf dist && npm run build && npm run postbuild && electron-builder build --win --x64"
+  },
+  "build": {
+    "asar": false,
+    "appId": "com.jainnythedj.musicnoweasy",
+    "productName": "JainnyTheDJ",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      ".next/standalone/**/*",
+      "package.json",
+      "!node_modules"
+    ],
+    "extraFiles": [
+      { "from": "yt-dlp.exe", "to": "yt-dlp.exe" },
+      { "from": ".env.local", "to": "resources/app-env.cfg" }
+    ],
+    "win": {
+      "target": "nsis",
+      "icon": "public/placeholder.png"
+    }
   },
   "dependencies": {
-    "@google/generative-ai": "^0.24.1",
-    "archiver": "^8.0.0",
-    "ffmpeg-static": "^5.3.0",
+    "@distube/ytdl-core": "^4.16.12",
+    "@prisma/adapter-pg": "^7.8.0",
+    "@prisma/client": "^7.8.0",
+    "@tailwindcss/postcss": "^4.3.1",
+    "fflate": "^0.8.3",
     "framer-motion": "^12.40.0",
-    "googleapis": "^173.0.0",
     "next": "^16.2.7",
+    "pg": "^8.21.0",
+    "play-dl": "^1.9.7",
+    "postcss": "^8.5.15",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
+    "soundcloud-downloader": "^1.0.0",
+    "soundcloud-scraper": "^5.0.3",
+    "streamsaver": "^2.0.6",
+    "tailwindcss": "^4.3.1",
     "uuid": "^14.0.0",
-    "yt-dlp-exec": "^1.0.2",
-    "ytdlp-nodejs": "^3.4.4"
+    "youtube-ext": "^1.1.25",
+    "youtube-sr": "^4.3.12",
+    "youtubei.js": "^17.0.1",
+    "zustand": "^5.0.14"
   },
   "devDependencies": {
-    "@types/archiver": "^7.0.0",
     "@types/node": "^20",
+    "@types/pg": "^8.20.0",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "@types/streamsaver": "^2.0.5",
     "@types/uuid": "^10.0.0",
-    "typescript": "^5"
+    "concurrently": "^10.0.3",
+    "cross-env": "^10.1.0",
+    "electron": "^42.4.0",
+    "electron-builder": "^26.15.3",
+    "prisma": "^7.8.0",
+    "shx": "^0.4.0",
+    "typescript": "^5",
+    "wait-on": "^9.0.10"
   }
 }

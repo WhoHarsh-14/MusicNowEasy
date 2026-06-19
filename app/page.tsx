@@ -1,662 +1,271 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
-import Image from "next/image";
+import { useState } from 'react';
+import Link from 'next/link';
 
-// ── Types ─────────────────────────────────────────────────────────────────────
+import { useCatalogueStore, usePlaylist, usePlayer } from '@/lib/store';
+import { useCurate } from '@/hooks/useCurate';
+import { CreateCategoryModal } from '@/components/CreateCategoryModal';
 
-interface SongRecommendation {
-  title: string;
-  artist: string;
-  searchQuery: string;
-}
+export default function CataloguePage() {
+  const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const collections = useCatalogueStore(state => state.collections);
+  const { add, songs: playlistSongs } = usePlaylist();
+  
+  // Get unique folders and count subcategories
+  const folderStats = collections.reduce((acc, c) => {
+    const folder = c.folder || 'Uncategorized';
+    if (!acc[folder]) acc[folder] = 0;
+    acc[folder]++;
+    return acc;
+  }, {} as Record<string, number>);
 
-interface HealthStatus {
-  gemini: boolean;
-  youtube: boolean;
-  ytdlp: boolean;
-  ffmpeg: boolean;
-}
-
-type AppStep = "idle" | "quiz" | "thinking" | "songs" | "downloading" | "done";
-
-// ── Constants ─────────────────────────────────────────────────────────────────
-
-const EXAMPLES = [
-  "🎸 80s classic rock anthems",
-  "🎧 Lo-fi beats for studying",
-  "💃 Bollywood dance hits 2024",
-  "🌧 Sad indie songs, rainy days",
-  "🔥 High-energy gym tracks",
-  "🎷 Late-night smooth jazz",
-];
-
-const PROG_STEPS = [
-  { label: "AI Thinking",  icon: "✦" },
-  { label: "Finding Songs", icon: "⌕" },
-  { label: "Downloading",  icon: "↓" },
-  { label: "Packaging",    icon: "◈" },
-];
-
-interface QuizStepCfg {
-  key: "type" | "vibe" | "trend" | "theme" | "base";
-  title: string;
-  question: string;
-  options: string[];
-  placeholder: string;
-}
-
-const QUIZ_STEPS: QuizStepCfg[] = [
-  {
-    key: "type",
-    title: "Song Type",
-    question: "What style or genre are you after?",
-    options: ["🎸 Rock / Metal", "🎵 Pop / Synthpop", "🎧 EDM / Dance", "🎤 Hip-Hop / Rap",
-               "🎹 R&B / Soul", "🍃 Acoustic / Folk", "🎻 Classical / Ambient", "🎬 Bollywood / Indian"],
-    placeholder: "Custom genre (e.g. Lo-Fi, Synthwave, K-pop)…",
-  },
-  {
-    key: "vibe",
-    title: "Vibe / Mood",
-    question: "What mood should the playlist set?",
-    options: ["☕ Chill & Mellow", "⚡ Energetic & Hype", "🌧 Sad & Emotional", "🌌 Dark & Moody",
-               "☀️ Uplifting & Happy", "❤️ Romantic & Sweet"],
-    placeholder: "Custom vibe (e.g. Ethereal, Aggressive, Nostalgic)…",
-  },
-  {
-    key: "trend",
-    title: "Trend / Era",
-    question: "Which era or popularity tier?",
-    options: ["📈 Hot & Viral (Trending)", "📀 Timeless Classics", "📼 80s / 90s Throwbacks",
-               "💎 Underground Gems", "🆕 Fresh New Releases"],
-    placeholder: "Custom era (e.g. Early 2000s Pop, Y2K)…",
-  },
-  {
-    key: "theme",
-    title: "Theme / Setting",
-    question: "What's the setting for this music?",
-    options: ["🚗 Late Night Drive", "🏋️ Workout & Gym", "📚 Study & Focus",
-               "☕ Rainy Day Café", "🪩 Party & Dance", "🌅 Sunset Beach"],
-    placeholder: "Custom theme (e.g. Gaming session, Road trip)…",
-  },
-  {
-    key: "base",
-    title: "Instrument Base",
-    question: "What should anchor the sound?",
-    options: ["🔊 Heavy Bass & Beats", "🎸 Acoustic / Unplugged", "🎹 Synth-Driven",
-               "🎙️ Vocal-Focused", "🎼 Instrumental-Heavy", "⚡ Electric Riffs"],
-    placeholder: "Custom base (e.g. Lo-fi piano, 808 sub-bass)…",
-  },
-];
-
-// ── Component ─────────────────────────────────────────────────────────────────
-
-export default function HomePage() {
-  const [prompt, setPrompt]               = useState("");
-  const [songCount, setSongCount]         = useState(10);
-  const [inputValue, setInputValue]       = useState("10");
-  const [step, setStep]                   = useState<AppStep>("idle");
-  const [currentStepIdx, setCurrentStepIdx] = useState(-1);
-  const [songs, setSongs]                 = useState<SongRecommendation[]>([]);
-  const [selectedSongs, setSelectedSongs] = useState<Set<number>>(new Set());
-  const [error, setError]                 = useState<string | null>(null);
-  const [health, setHealth]               = useState<HealthStatus | null>(null);
-  const [statusMsg, setStatusMsg]         = useState("");
-  const [downloadComplete, setDownloadComplete] = useState(false);
-
-  // Quiz
-  const [quizAnswers, setQuizAnswers] = useState({ type: "", vibe: "", trend: "", theme: "", base: "" });
-  const [quizStep, setQuizStep]       = useState(0);
-  const [customAnswer, setCustomAnswer] = useState("");
-
-  const isLoading = step === "thinking" || step === "downloading";
-
-  // ── Effects ────────────────────────────────────────────────────────────────
-
-  useEffect(() => { setInputValue(songCount.toString()); }, [songCount]);
-
-  useEffect(() => {
-    fetch("/api/health")
-      .then((r) => r.json())
-      .then(setHealth)
-      .catch(() => setHealth(null));
-  }, []);
-
-  // ── Helpers ────────────────────────────────────────────────────────────────
-
-  const toggleSong = useCallback((idx: number) => {
-    setSelectedSongs((prev) => {
-      const next = new Set(prev);
-      next.has(idx) ? next.delete(idx) : next.add(idx);
-      return next;
-    });
-  }, []);
-
-  const selectAll = useCallback(() => {
-    setSelectedSongs(new Set(songs.map((_, i) => i)));
-  }, [songs]);
-
-  const handleCountChange = (val: string) => {
-    setInputValue(val);
-    const n = parseInt(val, 10);
-    if (!isNaN(n)) setSongCount(Math.max(1, n));
+  const FOLDER_IMAGES: Record<string, string> = {
+    "Retro / Old School": "/images/folders/Retro_Old_School.jpg?v=3",
+    "Haldi / Mehendi": "/images/folders/Haldi_Mehendi.jpg?v=3",
+    "Wedding Special": "/images/folders/Wedding_Special.jpg?v=3",
+    "Chill / Lounge": "/images/folders/Chill_Lounge.jpg?v=3",
+    "Corporate Event": "/images/folders/Corporate_Event.jpg?v=3",
+    "Punjabi": "/images/folders/Punjabi.jpg?v=3",
+    "Hip Hop / Rap": "/images/folders/Hip_Hop_Rap.jpg?v=3",
+    "EDM / Club": "/images/folders/EDM_Club.jpg?v=3",
+    "Bollywood Commercial": "/images/folders/Bollywood_Commercial.jpg?v=3",
+    "Regional": "/images/folders/Regional.jpg?v=3",
+    "Festival Special": "/images/folders/Festival_Special.jpg?v=3",
+    "DJ Tools": "/images/folders/DJ_Tools.jpg?v=3",
+    "Crowd Control / Emergency": "/images/folders/Crowd_Control_Emergency.jpg?v=3",
+    "Ready Playlists": "/images/folders/Ready_Playlists.jpg?v=3"
   };
 
-  const handleCountBlur = () => {
-    const n = parseInt(inputValue, 10);
-    const clamped = isNaN(n) ? 10 : Math.max(1, n);
-    setSongCount(clamped);
-    setInputValue(clamped.toString());
-  };
+  const sortedFolders = Object.keys(folderStats).sort((a, b) => {
+    if (a === 'My Custom Categories') return 1;
+    if (b === 'My Custom Categories') return -1;
+    return a.localeCompare(b, undefined, { numeric: true });
+  });
 
-  // ── Core actions ───────────────────────────────────────────────────────────
+  const { currentSong, isPlaying, playContext, toggle } = usePlayer();
+  const [query, setQuery] = useState('');
+  const { songs, status, error, curate } = useCurate();
 
-  const executeGeneration = async (answers = quizAnswers) => {
-    if (!prompt.trim()) return;
-
-    setError(null);
-    setStep("thinking");
-    setCurrentStepIdx(0);
-    setSongs([]);
-    setSelectedSongs(new Set());
-    setDownloadComplete(false);
-    setStatusMsg("Gemini is curating your playlist…");
-
-    try {
-      const res = await fetch("/api/recommend", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ prompt: prompt.trim(), count: songCount, quiz: answers }),
-      });
-
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Recommendation failed");
-
-      const fetched: SongRecommendation[] = data.songs;
-      setSongs(fetched);
-      setSelectedSongs(new Set(fetched.map((_: SongRecommendation, i: number) => i)));
-      setCurrentStepIdx(1);
-      setStep("songs");
-      setStatusMsg(`Found ${fetched.length} songs. Select which to download.`);
-    } catch (e) {
-      setError((e as Error).message);
-      setStep("idle");
-      setCurrentStepIdx(-1);
+  const handleSearch = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (query.trim()) {
+      curate(query, 10);
     }
   };
-
-  const handleStartQuiz = () => {
-    setQuizStep(0);
-    setQuizAnswers({ type: "", vibe: "", trend: "", theme: "", base: "" });
-    setCustomAnswer("");
-    setStep("quiz");
-  };
-
-  const handleQuizNext = (selected?: string) => {
-    const cfg = QUIZ_STEPS[quizStep];
-    const answer = selected ?? customAnswer.trim();
-    const updated = { ...quizAnswers, [cfg.key]: answer };
-    setQuizAnswers(updated);
-    setCustomAnswer("");
-    if (quizStep < QUIZ_STEPS.length - 1) setQuizStep((p) => p + 1);
-    else executeGeneration(updated);
-  };
-
-  const handleQuizBack = () => {
-    if (quizStep > 0) {
-      setQuizStep((p) => p - 1);
-      setCustomAnswer(quizAnswers[QUIZ_STEPS[quizStep - 1].key] || "");
-    } else {
-      setStep("idle");
-    }
-  };
-
-  const handleQuizSkip = () => {
-    const cfg = QUIZ_STEPS[quizStep];
-    const updated = { ...quizAnswers, [cfg.key]: "" };
-    setQuizAnswers(updated);
-    setCustomAnswer("");
-    if (quizStep < QUIZ_STEPS.length - 1) setQuizStep((p) => p + 1);
-    else executeGeneration(updated);
-  };
-
-  const handleDownload = async () => {
-    if (selectedSongs.size === 0) return;
-
-    setError(null);
-    setStep("downloading");
-    setCurrentStepIdx(2);
-    setDownloadComplete(false);
-
-    const toDownload = songs.filter((_, i) => selectedSongs.has(i));
-
-    try {
-      const res = await fetch("/api/download", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ songs: toDownload }),
-      });
-
-      if (!res.ok) {
-        const err = await res.json();
-        throw new Error(err.error || "Download failed");
-      }
-
-      setCurrentStepIdx(3);
-      const blob = await res.blob();
-
-      const url = URL.createObjectURL(blob);
-      const a   = document.createElement("a");
-      a.href     = url;
-      a.download = `MusicNowEasy-${toDownload.length}-songs.zip`;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
-
-      setStep("done");
-      setCurrentStepIdx(4);
-      setDownloadComplete(true);
-      setStatusMsg(`✓ ${toDownload.length} song${toDownload.length !== 1 ? "s" : ""} downloaded.`);
-    } catch (e) {
-      setError((e as Error).message);
-      setStep("songs");
-      setCurrentStepIdx(1);
-    }
-  };
-
-  const handleReset = () => {
-    setStep("idle");
-    setCurrentStepIdx(-1);
-    setSongs([]);
-    setSelectedSongs(new Set());
-    setError(null);
-    setStatusMsg("");
-    setDownloadComplete(false);
-    setPrompt("");
-    setQuizStep(0);
-    setQuizAnswers({ type: "", vibe: "", trend: "", theme: "", base: "" });
-    setCustomAnswer("");
-  };
-
-  // ── Render ─────────────────────────────────────────────────────────────────
-
-  const showInputPanel  = step === "idle" || step === "quiz";
-  const showSongs       = songs.length > 0 && step !== "thinking";
-  const showProgressBar = step === "thinking" || step === "downloading";
 
   return (
-    <div className="page">
+    <main className="pt-24 pb-20 px-margin-mobile md:px-margin-desktop min-h-[calc(100vh-72px)] w-full relative">
+      
+      <CreateCategoryModal 
+        isOpen={isModalOpen} 
+        onClose={() => setIsModalOpen(false)} 
+      />
 
-      {/* ── Header ── */}
-      <header className="site-header">
-        <div className="header-inner">
-          <div className="brand">
-            <Image src="/logo.png" alt="MusicNowEasy logo" width={26} height={26} className="brand-logo" priority />
-            <span className="brand-name">MusicNowEasy</span>
+      {/* Direct Search Bar */}
+      <section className="mb-12">
+        <form onSubmit={handleSearch} className="relative group">
+          <div className="absolute inset-y-0 left-5 flex items-center pointer-events-none text-primary">
+            <span className="material-symbols-outlined text-[24px]">search</span>
           </div>
-          <div className="header-chips">
-            {health && (
-              <>
-                <span className={`h-chip ${health.gemini ? "ok" : "err"}`}>
-                  <span className="h-dot" />Gemini
-                </span>
-                <span className={`h-chip ${health.ytdlp ? "ok" : "err"}`}>
-                  <span className="h-dot" />yt-dlp
-                </span>
-              </>
-            )}
-          </div>
-        </div>
-      </header>
-
-      {/* ── Main ── */}
-      <main className="main">
-        <div className="wrap">
-
-          {/* Hero */}
-          <div className="hero">
-            <div className="hero-badge">✦ Powered by Gemini AI</div>
-            <h1 className="hero-title">Discover music that moves you.</h1>
-            <p className="hero-sub">
-              Describe what you're feeling — Gemini curates the playlist, you download it instantly.
-            </p>
-          </div>
-
-          {/* Prereqs warning */}
-          {health && (!health.gemini || !health.ytdlp) && (
-            <div className="prereqs">
-              <p className="prereqs-title">⚠ Setup Required</p>
-              <div className="prereqs-list">
-                <span className={`prereq ${health.gemini ? "ok" : "fail"}`}>{health.gemini ? "✓" : "✗"} Gemini API</span>
-                <span className={`prereq ${health.ytdlp  ? "ok" : "fail"}`}>{health.ytdlp  ? "✓" : "✗"} yt-dlp</span>
-              </div>
+          <input 
+            className="w-full h-14 bg-bg-raised border border-border text-text-primary pl-14 pr-4 rounded-lg focus:outline-none focus:border-primary-container focus:ring-1 focus:ring-primary-container transition-all font-body text-body-lg placeholder:text-text-tertiary shadow-lg" 
+            placeholder="Search for any song or artist directly..." 
+            type="text"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            disabled={status === 'curating'}
+          />
+          {status === 'curating' && (
+            <div className="absolute inset-y-0 right-4 flex items-center">
+              <span className="material-symbols-outlined animate-spin text-text-tertiary">sync</span>
             </div>
           )}
+        </form>
 
-          {/* Error / success banners */}
-          {error && (
-            <div className="alert error">
-              <span className="alert-icon">⚠</span>
-              <span>{error}</span>
+        {error && <div className="mt-4 text-error text-sm bg-error/10 border border-error/20 p-3 rounded">{error}</div>}
+
+        {/* Search Results */}
+        {songs.length > 0 && (
+          <div className="mt-4 bg-surface-container rounded-lg border border-border p-4 max-h-[350px] overflow-y-auto custom-scrollbar shadow-2xl">
+            <div className="flex justify-between items-center mb-4">
+              <h3 className="font-display text-xs font-bold text-text-secondary uppercase tracking-widest">Search Results</h3>
+              <button 
+                onClick={() => setQuery('')} // simple way to clear/hide results
+                className="text-text-tertiary hover:text-text-primary text-xs"
+              >
+                Clear
+              </button>
             </div>
-          )}
-          {downloadComplete && (
-            <div className="alert success">
-              <span className="alert-icon">✓</span>
-              <span>{statusMsg}</span>
-            </div>
-          )}
-
-          {/* ── INPUT / QUIZ PANEL ── */}
-          {showInputPanel && (
-            <div className="card">
-
-              {/* ── IDLE: prompt form ── */}
-              {step === "idle" && (
-                <>
-                  {/* Examples */}
-                  <div className="label">✦ Quick starts</div>
-                  <div className="chips-row">
-                    {EXAMPLES.map((ex) => (
-                      <button
-                        key={ex}
-                        type="button"
-                        className="example-chip"
-                        disabled={isLoading}
-                        onClick={() => setPrompt(ex.replace(/^.{2}\s*/, ""))}
-                      >
-                        {ex}
-                      </button>
-                    ))}
-                  </div>
-
-                  <div className="divider" />
-
-                  {/* Prompt textarea */}
-                  <div className="label">✦ Describe your music</div>
-                  <textarea
-                    id="music-prompt"
-                    className="prompt-area"
-                    placeholder="e.g. Sad Hindi love songs for a late-night drive in the rain…"
-                    value={prompt}
-                    onChange={(e) => setPrompt(e.target.value)}
-                    disabled={isLoading}
-                    maxLength={500}
-                    rows={3}
-                  />
-                  <p className={`char-hint${prompt.length > 450 ? " warn" : ""}`}>
-                    {prompt.length} / 500
-                  </p>
-
-                  <div className="divider" />
-
-                  {/* Song count */}
-                  <div className="label" style={{ marginBottom: 12 }}>🎵 Number of songs</div>
-                  <div className="count-wrap">
-                    <div className="presets">
-                      {[5, 10, 15, 20, 30].map((n) => (
-                        <button
-                          key={n}
-                          type="button"
-                          className={`preset${songCount === n ? " on" : ""}`}
-                          onClick={() => !isLoading && setSongCount(n)}
-                          disabled={isLoading}
-                        >
-                          {n}
-                        </button>
-                      ))}
-                    </div>
-                    <div className="stepper">
-                      <button
-                        type="button"
-                        className="step-btn"
-                        onClick={() => !isLoading && setSongCount((p) => Math.max(1, p - 1))}
-                        disabled={isLoading || songCount <= 1}
-                      >−</button>
-                      <input
-                        type="text"
-                        className="step-val"
-                        value={inputValue}
-                        onChange={(e) => handleCountChange(e.target.value)}
-                        onBlur={handleCountBlur}
-                        disabled={isLoading}
-                      />
-                      <button
-                        type="button"
-                        className="step-btn"
-                        onClick={() => !isLoading && setSongCount((p) => p + 1)}
-                        disabled={isLoading}
-                      >+</button>
-                    </div>
-                  </div>
-
-                  <div className="divider" />
-
-                  {/* CTAs */}
-                  <div style={{ display: "flex", flexDirection: "column", gap: 9 }}>
-                    <button
-                      id="quiz-btn"
-                      type="button"
-                      className="btn btn-primary"
-                      onClick={handleStartQuiz}
-                      disabled={isLoading || !prompt.trim()}
-                    >
-                      ✦ Refine with Quiz
-                    </button>
-                    <button
-                      id="generate-btn"
-                      type="button"
-                      className="btn btn-secondary"
-                      onClick={() => executeGeneration({ type: "", vibe: "", trend: "", theme: "", base: "" })}
-                      disabled={isLoading || !prompt.trim()}
-                    >
-                      Generate Immediately →
-                    </button>
-                  </div>
-                </>
-              )}
-
-              {/* ── QUIZ ── */}
-              {step === "quiz" && (
-                <div className="quiz-wrap">
-                  <div className="quiz-meta">
-                    <span className="quiz-step-lbl">{QUIZ_STEPS[quizStep].title}</span>
-                    <span className="quiz-step-num">{quizStep + 1} / {QUIZ_STEPS.length}</span>
-                  </div>
-
-                  <div className="quiz-bar">
-                    <div
-                      className="quiz-bar-fill"
-                      style={{ width: `${((quizStep + 1) / QUIZ_STEPS.length) * 100}%` }}
-                    />
-                  </div>
-
-                  <h2 className="quiz-q">{QUIZ_STEPS[quizStep].question}</h2>
-
-                  <div className="quiz-grid">
-                    {QUIZ_STEPS[quizStep].options.map((opt) => {
-                      const label = opt.replace(/^\S+\s/, "").trim();
-                      const isOn  = quizAnswers[QUIZ_STEPS[quizStep].key] === label;
-                      return (
-                        <button
-                          key={opt}
-                          type="button"
-                          className={`quiz-opt${isOn ? " on" : ""}`}
-                          onClick={() => handleQuizNext(label)}
-                        >
-                          {opt}
-                        </button>
-                      );
-                    })}
-                  </div>
-
-                  <p className="quiz-custom-lbl">Or type a custom answer</p>
-                  <input
-                    type="text"
-                    className="quiz-input"
-                    placeholder={QUIZ_STEPS[quizStep].placeholder}
-                    value={customAnswer}
-                    onChange={(e) => setCustomAnswer(e.target.value)}
-                    onKeyDown={(e) => e.key === "Enter" && handleQuizNext()}
-                  />
-
-                  <div className="quiz-nav">
-                    <button type="button" className="btn btn-ghost" onClick={handleQuizBack}>
-                      ← Back
-                    </button>
-                    <div className="quiz-nav-right">
-                      <button type="button" className="btn btn-ghost btn-sm" onClick={handleQuizSkip}>
-                        Skip
-                      </button>
-                      <button
-                        type="button"
-                        className="btn btn-secondary btn-sm"
-                        onClick={() => executeGeneration()}
-                      >
-                        Generate Now
-                      </button>
-                      <button
-                        type="button"
-                        className="btn btn-primary quiz-gen-btn"
-                        onClick={() => handleQuizNext()}
-                      >
-                        {quizStep === QUIZ_STEPS.length - 1 ? "Generate ✦" : "Next →"}
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* ── PROGRESS BAR ── */}
-          {showProgressBar && (
-            <div className="steps-wrap" style={{ position: "relative" }}>
-              <div className="steps-line-bg" />
-              <div
-                className="steps-line-fill"
-                style={{
-                  width: `calc(${(Math.max(0, currentStepIdx) / (PROG_STEPS.length - 1)) * 100}% * (1 - 2 / ${PROG_STEPS.length * 2}))`,
-                }}
-              />
-              {PROG_STEPS.map((s, i) => {
-                const isDone   = i < currentStepIdx;
-                const isActive = i === currentStepIdx;
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+              {songs.map((song, i) => {
+                const inPlaylist = playlistSongs.some(s => s.id === song.id);
+                const isThisPlaying = currentSong?.id === song.id;
                 return (
-                  <div key={s.label} className="step-item">
-                    <div className={`step-dot${isActive ? " active" : isDone ? " done" : ""}`}>
-                      {isDone ? "✓" : s.icon}
+                  <div key={song.id} className="flex items-center gap-4 bg-bg-base p-2 rounded-lg hover:bg-surface-container-high transition-colors border border-transparent hover:border-border-strong group">
+                    <div className="relative w-12 h-12 rounded overflow-hidden flex-shrink-0 cursor-pointer" onClick={() => isThisPlaying ? toggle() : playContext(songs, i)}>
+                      <img src={song.albumArt || '/placeholder.png'} className="w-full h-full object-cover" alt="" />
+                      <div className={`absolute inset-0 bg-black/40 flex items-center justify-center transition-opacity ${isThisPlaying ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}>
+                        <span className="material-symbols-outlined text-primary" style={{fontVariationSettings: "'FILL' 1"}}>
+                          {isThisPlaying && isPlaying ? 'pause' : 'play_arrow'}
+                        </span>
+                      </div>
                     </div>
-                    <span className={`step-lbl${isActive ? " active" : isDone ? " done" : ""}`}>
-                      {s.label}
-                    </span>
+                    <div className="flex-grow min-w-0">
+                      <p className="font-body font-bold text-text-primary truncate">{song.title}</p>
+                      <p className="font-body text-xs text-text-secondary truncate">{song.artist}</p>
+                    </div>
+                    {song.audioUrl ? (
+                      <button 
+                        onClick={() => !inPlaylist && add(song)}
+                        className={`p-2 transition-all active:scale-90 ${inPlaylist ? 'text-primary' : 'text-text-secondary hover:text-primary group-hover:scale-110'}`}
+                      >
+                        <span className="material-symbols-outlined" style={{fontVariationSettings: inPlaylist ? "'FILL' 1" : "'FILL' 0"}}>
+                          {inPlaylist ? 'check_circle' : 'add_circle'}
+                        </span>
+                      </button>
+                    ) : (
+                      <span className="text-error text-[10px] uppercase font-bold tracking-widest">Failed</span>
+                    )}
                   </div>
                 );
               })}
             </div>
-          )}
+          </div>
+        )}
+      </section>
 
-          {/* ── THINKING STATE ── */}
-          {step === "thinking" && (
-            <div className="loading-panel">
-              <div className="spin spin-lg" />
-              <p className="loading-title">Gemini is curating your playlist…</p>
-              <p className="loading-sub">Finding the perfect songs based on your taste</p>
+      {/* Category Grid Section */}
+      <section>
+        <div className="flex items-center justify-between mb-6">
+          <h2 className="font-display text-h2 font-semibold text-text-primary flex items-center gap-2">
+            <span className="w-1 h-6 bg-primary"></span>
+            Library Folders
+          </h2>
+          <div className="flex gap-4 items-center">
+            <button 
+              onClick={() => setIsModalOpen(true)}
+              className="bg-primary hover:bg-gold-light text-bg-base font-label text-[10px] uppercase tracking-widest font-bold px-4 py-2 rounded transition-colors flex items-center gap-2"
+            >
+              <span className="material-symbols-outlined text-[16px]">add</span>
+              New Category
+            </button>
+            <div className="flex gap-2 border-l border-border-strong pl-4">
+              <button 
+                onClick={() => setViewMode('grid')}
+                className={`w-8 h-8 rounded border flex items-center justify-center transition-colors ${viewMode === 'grid' ? 'bg-surface-container-highest border-primary text-primary' : 'border-border-strong hover:bg-bg-hover text-text-secondary hover:text-text-primary'}`}
+              >
+                <span className="material-symbols-outlined text-sm">grid_view</span>
+              </button>
+              <button 
+                onClick={() => setViewMode('list')}
+                className={`w-8 h-8 rounded border flex items-center justify-center transition-colors ${viewMode === 'list' ? 'bg-surface-container-highest border-primary text-primary' : 'border-border-strong hover:bg-bg-hover text-text-secondary hover:text-text-primary'}`}
+              >
+                <span className="material-symbols-outlined text-sm">list</span>
+              </button>
             </div>
-          )}
-
-          {/* ── SONGS LIST ── */}
-          {showSongs && (
-            <div className="songs-wrap">
-              <div className="songs-head">
-                <div className="songs-head-left">
-                  <h2 className="songs-title">Your Playlist</h2>
-                  <span className="songs-badge">{songs.length} songs</span>
-                </div>
-                <div className="songs-head-right">
-                  <button type="button" className="btn btn-ghost btn-sm" onClick={selectAll}>
-                    Select All
-                  </button>
-                </div>
-              </div>
-
-              <div className="song-list">
-                {songs.map((song, idx) => (
-                  <div
-                    key={`${song.title}-${idx}`}
-                    className={`song-row${selectedSongs.has(idx) ? " on" : ""}`}
-                    onClick={() => toggleSong(idx)}
-                    role="checkbox"
-                    aria-checked={selectedSongs.has(idx)}
-                    tabIndex={0}
-                    onKeyDown={(e) => (e.key === " " || e.key === "Enter") && toggleSong(idx)}
-                    style={{ animationDelay: `${Math.min(idx * 0.025, 0.5)}s` }}
-                  >
-                    <span className="song-num">{idx + 1}</span>
-                    <div className="song-icon">♪</div>
-                    <div className="song-info">
-                      <div className="song-title">{song.title}</div>
-                      <div className="song-artist">{song.artist}</div>
-                    </div>
-                    <div className="song-check">✓</div>
-                  </div>
-                ))}
-              </div>
-
-              {/* Download footer */}
-              <div className="dl-footer">
-                <div className="dl-meta-row">
-                  <span className="dl-count">
-                    <strong>{selectedSongs.size}</strong> of {songs.length} selected
-                  </span>
-                  <span className="fmt-badge">🎵 M4A · High Quality</span>
-                </div>
-                <div className="dl-actions">
-                  <button
-                    type="button"
-                    className="btn-danger"
-                    onClick={handleReset}
-                    disabled={isLoading}
-                  >
-                    ↺ New Search
-                  </button>
-                  <button
-                    id="download-btn"
-                    type="button"
-                    className="btn btn-primary"
-                    onClick={handleDownload}
-                    disabled={selectedSongs.size === 0 || isLoading}
-                  >
-                    {step === "downloading" ? (
-                      <><div className="spin" /> Downloading {selectedSongs.size} songs…</>
-                    ) : downloadComplete ? (
-                      <>✓ Download Again</>
-                    ) : (
-                      <>◈ Download {selectedSongs.size} song{selectedSongs.size !== 1 ? "s" : ""} as ZIP</>
-                    )}
-                  </button>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* Downloading hint below songs list */}
-          {step === "downloading" && (
-            <p style={{ textAlign: "center", fontSize: 12.5, color: "var(--t3)", marginTop: 14, lineHeight: 1.6 }}>
-              Songs are being downloaded and packaged concurrently.<br />
-              This may take a few minutes depending on playlist size.
-            </p>
-          )}
-
+          </div>
         </div>
-      </main>
 
-      {/* ── Footer ── */}
-      <footer className="site-footer">
-        <p>MusicNowEasy · Powered by Gemini AI & yt-dlp · For personal use only</p>
-      </footer>
+        <div className={viewMode === 'grid' ? "grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6" : "flex flex-col gap-4"}>
+          {sortedFolders.map((folderName, idx) => {
+            const titleMatch = folderName.match(/^(\d+)\.\s+(.*)$/);
+            const displayNumber = titleMatch ? titleMatch[1].padStart(2, '0') : String(idx + 1).padStart(2, '0');
+            const cleanTitle = titleMatch ? titleMatch[2] : folderName;
+            const bgImage = FOLDER_IMAGES[cleanTitle];
 
-    </div>
+            if (bgImage && viewMode === 'grid') {
+              return (
+                <Link 
+                  key={folderName}
+                  href={`/catalogue/folder/${encodeURIComponent(folderName)}`}
+                  className="group relative rounded-xl overflow-hidden block aspect-[4/5] flex flex-col justify-end p-6 border border-border transition-all duration-500 hover:-translate-y-2 hover:shadow-2xl gold-border-glow"
+                >
+                  {/* Background Image */}
+                  <div 
+                    className="absolute inset-0 bg-cover bg-center transition-transform duration-700 group-hover:scale-110"
+                    style={{ backgroundImage: `url('${bgImage}')` }}
+                  />
+                  {/* Dark Gradient Overlay */}
+                  <div className="absolute inset-0 bg-gradient-to-t from-[#0a0a0a] via-[#0a0a0a]/60 to-transparent opacity-90 group-hover:opacity-100 transition-opacity" />
+                  
+                  <div className="relative z-10 w-full flex flex-col gap-4">
+                    {/* Tags Row */}
+                    <div className="flex items-center gap-3 mb-2">
+                      <span className="bg-primary text-bg-base font-label text-[10px] uppercase font-bold px-3 py-1.5 rounded-full flex items-center gap-1 shadow-lg shadow-primary/20">
+                        <span className="material-symbols-outlined text-[12px]">local_fire_department</span>
+                        Trending Now
+                      </span>
+                      <span className="font-label text-[9px] uppercase tracking-widest text-text-secondary font-bold">
+                        {folderStats[folderName]} Categories
+                      </span>
+                    </div>
+                    
+                    {/* Title and Description */}
+                    <div>
+                      <h3 className="font-display text-4xl font-bold text-primary mb-3 leading-tight drop-shadow-md">{cleanTitle}</h3>
+                      <p className="font-body text-sm text-text-secondary line-clamp-2">
+                        High-energy beats and anthems curated specifically for the ultimate {cleanTitle.toLowerCase()} experience.
+                      </p>
+                    </div>
+
+                    {/* Action Button */}
+                    <div className="flex items-center gap-2 mt-2 group/btn cursor-pointer">
+                      <span className="font-label text-[11px] font-bold uppercase tracking-widest text-primary">Explore Collection</span>
+                      <span className="material-symbols-outlined text-primary group-hover/btn:translate-x-1 transition-transform">arrow_forward</span>
+                    </div>
+                  </div>
+                </Link>
+              );
+            }
+
+            // Fallback for folders without an image, or list view
+            return (
+              <Link 
+                key={folderName}
+                href={`/catalogue/folder/${encodeURIComponent(folderName)}`}
+                className={`group relative bg-surface-container border border-border rounded-xl overflow-hidden transition-all duration-300 hover:-translate-y-1 hover:shadow-2xl gold-border-glow ${viewMode === 'grid' ? 'p-6 block aspect-[4/5] flex flex-col justify-between' : 'p-4 flex items-center gap-6'}`}
+              >
+                {viewMode === 'grid' && (
+                  <div className="absolute right-0 bottom-[-5%] font-display text-[160px] leading-none font-bold text-primary/5 italic pointer-events-none select-none group-hover:scale-110 group-hover:-rotate-3 transition-transform duration-500">
+                    {displayNumber}
+                  </div>
+                )}
+                
+                <div className={`relative z-10 h-full ${viewMode === 'grid' ? 'flex flex-col' : 'flex flex-row items-center w-full justify-between'}`}>
+                  {/* Left side for list view / Top side for grid view */}
+                  <div className={viewMode === 'list' ? 'flex items-center gap-6' : ''}>
+                    <div className={`font-number text-primary tabular-nums ${viewMode === 'grid' ? 'text-4xl font-bold mb-4' : 'text-2xl font-bold w-12'}`}>
+                      {displayNumber}
+                    </div>
+                    <div>
+                      <h3 className={`font-display text-text-primary ${viewMode === 'grid' ? 'text-2xl font-bold mb-1' : 'text-xl'}`}>{cleanTitle}</h3>
+                      <p className={`font-body text-sm text-text-secondary ${viewMode === 'grid' ? 'mb-4' : ''}`}>{folderStats[folderName]} Categories</p>
+                    </div>
+                  </div>
+
+                  {/* Right side for list view / Bottom side for grid view */}
+                  <div className={viewMode === 'list' ? 'flex items-center gap-8' : 'mt-auto'}>
+                    <div className={`flex flex-wrap gap-2 ${viewMode === 'grid' ? 'mb-6' : ''}`}>
+                      <span className="font-label text-[10px] uppercase border border-primary/30 px-3 py-1 rounded-full text-primary">
+                        Folder
+                      </span>
+                    </div>
+
+                    <div className={`flex items-center justify-between transition-colors ${viewMode === 'grid' ? 'pt-4 border-t border-border-strong group-hover:border-primary/40' : ''}`}>
+                      {viewMode === 'grid' && <span className="font-label text-[11px] font-semibold uppercase tracking-widest text-text-secondary group-hover:text-primary transition-colors">Open Folder</span>}
+                      <div className="w-8 h-8 rounded-full bg-surface-container-highest group-hover:bg-primary flex items-center justify-center transition-colors">
+                        <span className="material-symbols-outlined text-primary group-hover:text-bg-base text-sm transition-colors">arrow_forward</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </Link>
+            );
+          })}
+        </div>
+      </section>
+    </main>
   );
 }
