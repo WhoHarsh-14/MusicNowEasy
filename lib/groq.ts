@@ -25,9 +25,8 @@ Return exactly ${count} songs as a JSON array with ONLY title and artist:
 ]`;
 }
 
-// Function name kept same so we don't break other files, 
-// but it now uses Groq (Llama 3) under the hood!
-export async function collectGeminiSongs(
+// Function now properly named since we use Groq (Llama 3) under the hood!
+export async function collectGroqSongs(
   query: string,
   count: number,
   exclude: string[] = []

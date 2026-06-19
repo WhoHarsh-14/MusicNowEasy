@@ -10,7 +10,6 @@ const nextConfig: NextConfig = {
   // This is the most reliable way to bundle secrets in a packaged Electron desktop app.
   env: {
     GROQ_API_KEY: process.env.GROQ_API_KEY,
-    GEMINI_API_KEY: process.env.GEMINI_API_KEY,
     SPOTIFY_CLIENT_ID: process.env.SPOTIFY_CLIENT_ID,
     SPOTIFY_CLIENT_SECRET: process.env.SPOTIFY_CLIENT_SECRET,
     DATABASE_URL: process.env.DATABASE_URL,

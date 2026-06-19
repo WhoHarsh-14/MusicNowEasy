@@ -1,5 +1,5 @@
 import { NextRequest } from 'next/server';
-import { collectGeminiSongs, MAX_CONCURRENT } from '@/lib/gemini';
+import { collectGroqSongs, MAX_CONCURRENT } from '@/lib/groq';
 import { spotifySearch, getSpotifyToken } from '@/lib/spotify';
 import { cobaltResolve } from '@/lib/cobalt';
 import { db } from '@/lib/db';
@@ -94,14 +94,14 @@ export async function GET(req: NextRequest) {
 
       try {
         const token = await getSpotifyToken().catch(() => '');
-        const geminiSlot = createSemaphore(MAX_CONCURRENT);
+        const groqSlot = createSemaphore(MAX_CONCURRENT);
 
-        // ─── Phase A: Parallel Gemini batches (rate-limited) ─────────────────
+        // ─── Phase A: Parallel Groq batches (rate-limited) ─────────────────
         // Batches fire in groups of MAX_CONCURRENT (3) to stay within 15 RPM.
         // Wall time ≈ ceil(numBatches / 3) × ~5s   e.g. 10 batches → ~20s
         const numBatches = Math.ceil(count / BATCH_SIZE);
         const batchPromises = Array.from({ length: numBatches }, () =>
-          geminiSlot(() => collectGeminiSongs(query, BATCH_SIZE))
+          groqSlot(() => collectGroqSongs(query, BATCH_SIZE))
         );
 
         // As each batch resolves, immediately enrich + SSE emit its songs

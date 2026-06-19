@@ -6,7 +6,7 @@ A powerful, AI-driven desktop application built for professional DJs and music e
 
 ## ✨ Features
 
-- **🤖 AI Smart Curation:** Uses advanced AI (Groq & Gemini APIs) to instantly auto-generate 20+ track playlists tailored to specific themes, events, or vibes (e.g., "Wedding Special", "EDM Club Hits").
+- **🤖 AI Smart Curation:** Uses advanced AI (Groq API) to instantly auto-generate 20+ track playlists tailored to specific themes, events, or vibes (e.g., "Wedding Special", "EDM Club Hits").
 - **📂 Interactive Catalogue:** A robust, folder-based homepage allowing easy navigation through pre-built music collections.
 - **🎵 Built-in Audio Player:** Stream your generated playlists directly inside the application with an integrated, sleek audio player.
 - **⚡ Next.js + Electron Power:** Built with the bleeding-edge Next.js 16 App Router (Turbopack) wrapped flawlessly in Electron for a lightning-fast native desktop experience.
@@ -54,7 +54,6 @@ Because `yt-dlp.exe` is a large binary file, it is excluded from GitHub (`.gitig
 Create a `.env` file in the root of your project and configure the following keys:
 ```env
 GROQ_API_KEY=your_groq_api_key
-GEMINI_API_KEY=your_gemini_api_key
 SPOTIFY_CLIENT_ID=your_spotify_client_id
 SPOTIFY_CLIENT_SECRET=your_spotify_client_secret
 DATABASE_URL=your_prisma_database_url
