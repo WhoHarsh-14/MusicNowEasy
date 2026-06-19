@@ -117,7 +117,7 @@ export async function GET(req: NextRequest) {
         const missing = count - resolvedSongs.length;
         if (missing > 0 && !req.signal.aborted) {
           const excludeList = resolvedSongs.map((s) => `${s.title} by ${s.artist}`);
-          const fillSongs = await collectGeminiSongs(query, missing, excludeList);
+          const fillSongs = await collectGroqSongs(query, missing, excludeList);
           await Promise.all(fillSongs.map((song) => enrichAndSend(song, token)));
         }
 
