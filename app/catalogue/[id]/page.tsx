@@ -25,21 +25,28 @@ export default function CatalogueDetailPage({ params }: { params: Promise<{ id: 
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [progress, setProgress] = useState<DownloadProgress | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
-  const [customLimit, setCustomLimit] = useState<number>(50);
+  const [customLimit, setCustomLimit] = useState<number | ''>(50);
   const hasAppended = useRef(false);
+  const prevStatusRef = useRef(status);
+  const baseSongsRef = useRef(collection?.songs || []);
 
   useEffect(() => {
     setMounted(true);
   }, []);
 
+  useEffect(() => {
+    baseSongsRef.current = collection?.songs || [];
+  }, [collection?.songs]);
+
   // When AI finishes curating, auto-save to the store!
   useEffect(() => {
-    if (status === 'done' && aiSongs.length > 0) {
-      const newSongs = hasAppended.current ? [...(collection?.songs || []), ...aiSongs] : aiSongs;
+    if (prevStatusRef.current === 'curating' && status === 'done' && aiSongs.length > 0) {
+      const newSongs = hasAppended.current ? [...baseSongsRef.current, ...aiSongs] : aiSongs;
       updateCollectionSongs(id, newSongs);
       hasAppended.current = false;
     }
-  }, [status, aiSongs, id, updateCollectionSongs, collection?.songs]);
+    prevStatusRef.current = status;
+  }, [status, aiSongs, id, updateCollectionSongs]);
 
   if (!mounted) return null;
 
@@ -63,7 +70,7 @@ export default function CatalogueDetailPage({ params }: { params: Promise<{ id: 
   const handleMagicFill = (append = false) => {
     hasAppended.current = append;
     const excludeList = append ? baseSongs.map(s => `${s.title} by ${s.artist}`) : [];
-    const count = customLimit;
+    const count = Math.max(1, Number(customLimit) || 50);
     curate(`${collection.title} essentials, top hits`, count, false, false, excludeList);
   };
 
@@ -136,13 +143,16 @@ export default function CatalogueDetailPage({ params }: { params: Promise<{ id: 
             <div className="flex items-center bg-surface-container-highest border border-border rounded-lg overflow-hidden h-14">
               <input 
                 type="number" 
-                min="20" 
+                min="1" 
                 max="150" 
                 value={customLimit}
-                onChange={(e) => setCustomLimit(Math.min(150, Math.max(20, parseInt(e.target.value) || 50)))}
-                className="bg-transparent text-text-primary h-full w-20 text-center font-body focus:outline-none"
+                onChange={(e) => {
+                  const val = parseInt(e.target.value);
+                  setCustomLimit(isNaN(val) ? '' : Math.min(150, val));
+                }}
+                className="bg-transparent text-text-primary h-full w-20 text-center font-body focus:outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
                 disabled={isCurating}
-                title="Number of tracks to generate (20-150)"
+                title="Number of tracks to generate (1-150)"
               />
               <button 
                 onClick={() => handleMagicFill(true)}
@@ -181,11 +191,14 @@ export default function CatalogueDetailPage({ params }: { params: Promise<{ id: 
               <label className="text-xs font-label text-text-tertiary uppercase tracking-widest">Amount</label>
               <input 
                 type="number" 
-                min="20" 
+                min="1" 
                 max="150" 
                 value={customLimit}
-                onChange={(e) => setCustomLimit(Math.min(150, Math.max(20, parseInt(e.target.value) || 50)))}
-                className="bg-surface-container-highest border border-border text-text-primary h-12 w-24 rounded-lg font-body text-center focus:border-primary focus:outline-none transition-colors"
+                onChange={(e) => {
+                  const val = parseInt(e.target.value);
+                  setCustomLimit(isNaN(val) ? '' : Math.min(150, val));
+                }}
+                className="bg-surface-container-highest border border-border text-text-primary h-12 w-24 rounded-lg font-body text-center focus:border-primary focus:outline-none transition-colors [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
               />
             </div>
             <button 
