@@ -63,7 +63,7 @@ export default function CatalogueDetailPage({ params }: { params: Promise<{ id: 
   const handleMagicFill = (append = false) => {
     hasAppended.current = append;
     const excludeList = append ? baseSongs.map(s => `${s.title} by ${s.artist}`) : [];
-    const count = append ? 50 : customLimit;
+    const count = customLimit;
     curate(`${collection.title} essentials, top hits`, count, false, false, excludeList);
   };
 
@@ -132,15 +132,27 @@ export default function CatalogueDetailPage({ params }: { params: Promise<{ id: 
         </div>
         
         {isFilled && (
-          <div className="flex gap-4">
-            <button 
-              onClick={() => handleMagicFill(true)}
-              disabled={isCurating}
-              className="shrink-0 bg-surface-container-highest border border-border text-text-primary h-14 px-6 rounded-lg font-body font-bold flex items-center justify-center gap-2 hover:border-primary hover:text-primary transition-all active:scale-[0.98] disabled:opacity-50"
-            >
-              <span className="material-symbols-outlined">magic_button</span>
-              MORE MAGIC FILL (+50)
-            </button>
+          <div className="flex gap-4 items-center">
+            <div className="flex items-center bg-surface-container-highest border border-border rounded-lg overflow-hidden h-14">
+              <input 
+                type="number" 
+                min="20" 
+                max="150" 
+                value={customLimit}
+                onChange={(e) => setCustomLimit(Math.min(150, Math.max(20, parseInt(e.target.value) || 50)))}
+                className="bg-transparent text-text-primary h-full w-20 text-center font-body focus:outline-none"
+                disabled={isCurating}
+                title="Number of tracks to generate (20-150)"
+              />
+              <button 
+                onClick={() => handleMagicFill(true)}
+                disabled={isCurating}
+                className="bg-transparent border-l border-border text-text-primary h-full px-6 font-body font-bold flex items-center justify-center gap-2 hover:bg-primary/10 hover:text-primary transition-all disabled:opacity-50"
+              >
+                <span className="material-symbols-outlined">magic_button</span>
+                MORE MAGIC FILL
+              </button>
+            </div>
             <button 
               onClick={handleDownload}
               disabled={isDownloading || isCurating}
