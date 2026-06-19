@@ -5,6 +5,7 @@ import { CurateStage, Song } from '@/types';
 export function useAICurate() {
   const [songs, setSongs] = useState<Song[]>([]);
   const [status, setStatus] = useState<'idle' | 'curating' | 'done' | 'error'>('idle');
+  const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
   const { add } = usePlaylist();
@@ -13,6 +14,7 @@ export function useAICurate() {
     abortControllerRef.current?.abort();
     if (!append) setSongs([]);
     setStatus('curating');
+    setStatusMessage(null);
     setError(null);
 
     const abortController = new AbortController();
@@ -58,6 +60,10 @@ export function useAICurate() {
                 setStatus('done');
               }
 
+              if (event.type === 'status') {
+                setStatusMessage(event.message);
+              }
+
               if (event.type === 'error') {
                 setStatus('error');
                 setError(event.message);
@@ -78,7 +84,8 @@ export function useAICurate() {
   const cancel = useCallback(() => {
     abortControllerRef.current?.abort();
     setStatus('idle');
+    setStatusMessage(null);
   }, []);
 
-  return { songs, status, error, curate, cancel };
+  return { songs, status, statusMessage, error, curate, cancel };
 }

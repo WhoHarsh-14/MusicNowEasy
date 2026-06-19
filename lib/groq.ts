@@ -55,6 +55,9 @@ export async function collectGroqSongs(
 
   if (!response.ok) {
      const text = await response.text();
+     if (response.status === 429) {
+       throw new Error('RATE_LIMIT_EXCEEDED');
+     }
      console.error('Groq API error:', text);
      throw new Error(`Groq API error: ${response.status}`);
   }

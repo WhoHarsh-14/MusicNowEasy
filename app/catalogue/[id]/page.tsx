@@ -18,7 +18,7 @@ export default function CatalogueDetailPage({ params }: { params: Promise<{ id: 
   
   const { currentSong, isPlaying, playContext, toggle } = usePlayer();
   const { add, songs: playlistSongs } = usePlaylist();
-  const { songs: aiSongs, status, curate } = useAICurate();
+  const { songs: aiSongs, status, statusMessage, curate } = useAICurate();
 
   const [mounted, setMounted] = useState(false);
   const [isDownloading, setIsDownloading] = useState(false);
@@ -215,7 +215,9 @@ export default function CatalogueDetailPage({ params }: { params: Promise<{ id: 
       {status === 'curating' && (
         <div className="flex flex-col items-center justify-center py-20 text-text-tertiary space-y-4">
           <div className="w-12 h-12 border-4 border-surface-container-highest border-t-primary rounded-full animate-spin" />
-          <p className="animate-pulse font-body text-body font-medium uppercase tracking-widest">Extracting {collection.title} Tracks...</p>
+          <p className="animate-pulse font-body text-body font-medium uppercase tracking-widest text-center max-w-md">
+            {statusMessage || `Extracting ${collection.title} Tracks...`}
+          </p>
         </div>
       )}
 

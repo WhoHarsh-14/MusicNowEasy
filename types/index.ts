@@ -23,6 +23,7 @@ export type RawSong = {
 
 export type CurateStage =
   | { type: "song"; song: Song }
+  | { type: "status"; message: string }
   | { type: "done" }
   | { type: "error"; message: string };
 

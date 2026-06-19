@@ -34,7 +34,7 @@ export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
     query = body.q || body.query || '';
-    count = Math.min(parseInt(body.n || body.count || '20'), 150);
+    count = Math.min(parseInt(body.n || body.count || '20'), 1000);
     clientExclude = Array.isArray(body.exclude) ? body.exclude : [];
   } catch (e) {
     return new Response('Invalid JSON body', { status: 400 });
@@ -106,12 +106,28 @@ export async function POST(req: NextRequest) {
         const token = await getSpotifyToken().catch(() => '');
         const groqSlot = createSemaphore(MAX_CONCURRENT);
 
+        const fetchWithRetry = async (queryStr: string, amt: number, excl: string[]): Promise<RawSong[]> => {
+          while (true) {
+            if (req.signal.aborted) return [];
+            try {
+              return await collectGroqSongs(queryStr, amt, excl);
+            } catch (e: any) {
+              if (e.message === 'RATE_LIMIT_EXCEEDED') {
+                send({ type: 'status', message: 'Taking a quick breather to keep things running smoothly. Back in 60 seconds!' });
+                await new Promise(r => setTimeout(r, 60000));
+                continue;
+              }
+              throw e;
+            }
+          }
+        };
+
         // ─── Phase A: Parallel Groq batches (rate-limited) ─────────────────
         // Batches fire in groups of MAX_CONCURRENT (3) to stay within 15 RPM.
         // Wall time ≈ ceil(numBatches / 3) × ~5s   e.g. 10 batches → ~20s
         const numBatches = Math.ceil(count / BATCH_SIZE);
         const batchPromises = Array.from({ length: numBatches }, () =>
-          groqSlot(() => collectGroqSongs(query, BATCH_SIZE, clientExclude))
+          groqSlot(() => fetchWithRetry(query, BATCH_SIZE, clientExclude))
         );
 
         // As each batch resolves, immediately enrich + SSE emit its songs
@@ -127,7 +143,7 @@ export async function POST(req: NextRequest) {
         const missing = count - resolvedSongs.length;
         if (missing > 0 && !req.signal.aborted) {
           const excludeList = [...clientExclude, ...resolvedSongs.map((s) => `${s.title} by ${s.artist}`)];
-          const fillSongs = await collectGroqSongs(query, missing, excludeList);
+          const fillSongs = await fetchWithRetry(query, missing, excludeList);
           await Promise.all(fillSongs.map((song) => enrichAndSend(song, token)));
         }
 

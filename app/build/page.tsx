@@ -9,7 +9,7 @@ import DownloadModal from '@/components/DownloadModal';
 export default function Home() {
   const [query, setQuery] = useState('');
   const [count, setCount] = useState(20);
-  const { songs, status, error, curate, cancel, clear: clearResults } = useCurate();
+  const { songs, status, statusMessage, error, curate, cancel, clear: clearResults } = useCurate();
   const { add, songs: playlistSongs, remove, clear, totalBytes } = usePlaylist();
   const { currentSong, isPlaying, playContext, toggle } = usePlayer();
   
@@ -104,7 +104,7 @@ export default function Home() {
                   if (!count || count < 1) setCount(10);
                   if (count > 1000) setCount(1000);
                 }}
-                className="w-14 bg-surface-container-highest border border-border-strong text-text-secondary text-xs font-bold rounded px-2 h-8 outline-none focus:border-primary text-center"
+                className="w-14 bg-surface-container-highest border border-border-strong text-text-secondary text-xs font-bold rounded px-2 h-8 outline-none focus:border-primary text-center [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
                 disabled={status === 'curating'}
               />
               {status === 'curating' ? (
@@ -133,7 +133,9 @@ export default function Home() {
         {status === 'curating' && songs.length === 0 && (
           <div className="flex-grow flex flex-col items-center justify-center text-text-tertiary space-y-4">
             <div className="w-10 h-10 border-4 border-surface-container-highest border-t-primary rounded-full animate-spin" />
-            <p className="animate-pulse font-body text-body font-medium uppercase tracking-widest">Waking up the DJ...</p>
+            <p className="animate-pulse font-body text-body font-medium tracking-widest text-center max-w-sm">
+              {statusMessage || 'WAKING UP THE DJ...'}
+            </p>
           </div>
         )}
 
