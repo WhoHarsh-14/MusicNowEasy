@@ -1,11 +1,18 @@
 "use client";
 
+import { useState } from "react";
 import { usePlayer } from "@/lib/store";
+import { Pagination } from "@/components/Pagination";
 
 export function QueueDrawer() {
   const { queue, currentIndex, showQueue, toggleQueue, playContext } = usePlayer();
+  const [currentPage, setCurrentPage] = useState(1);
+  const [itemsPerPage, setItemsPerPage] = useState(50);
 
   if (!showQueue) return null;
+
+  const totalPages = Math.ceil(queue.length / itemsPerPage);
+  const paginatedQueue = queue.slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage);
 
   return (
     <>
@@ -34,7 +41,9 @@ export function QueueDrawer() {
               <p className="font-body text-body">Queue is empty</p>
             </div>
           ) : (
-            queue.map((song, idx) => {
+            <>
+            {paginatedQueue.map((song, i) => {
+              const idx = (currentPage - 1) * itemsPerPage + i;
               const isPlaying = idx === currentIndex;
               return (
                 <div 
@@ -66,7 +75,17 @@ export function QueueDrawer() {
                   </div>
                 </div>
               );
-            })
+            })}
+            {queue.length > 0 && (
+              <Pagination
+                currentPage={currentPage}
+                totalPages={totalPages}
+                onPageChange={setCurrentPage}
+                itemsPerPage={itemsPerPage}
+                onItemsPerPageChange={(val) => { setItemsPerPage(val); setCurrentPage(1); }}
+              />
+            )}
+            </>
           )}
         </div>
       </div>

@@ -13,6 +13,19 @@ export default function Home() {
   const { add, songs: playlistSongs, remove, clear, totalBytes } = usePlaylist();
   const { currentSong, isPlaying, playContext, toggle } = usePlayer();
   
+  // Pagination State
+  const [resultsPage, setResultsPage] = useState(1);
+  const [resultsPerPage, setResultsPerPage] = useState(50);
+  const [playlistPage, setPlaylistPage] = useState(1);
+  const [playlistPerPage, setPlaylistPerPage] = useState(50);
+
+  // Derived state for pagination
+  const totalResultsPages = Math.ceil(songs.length / resultsPerPage);
+  const paginatedSongs = songs.slice((resultsPage - 1) * resultsPerPage, resultsPage * resultsPerPage);
+
+  const totalPlaylistPages = Math.ceil(playlistSongs.length / playlistPerPage);
+  const paginatedPlaylist = playlistSongs.slice((playlistPage - 1) * playlistPerPage, playlistPage * playlistPerPage);
+  
   const [mounted, setMounted] = useState(false);
   const [downloading, setDownloading] = useState(false);
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -102,7 +115,10 @@ export default function Home() {
                 }}
                 onBlur={() => {
                   if (!count || count < 1) setCount(10);
-                  if (count > 1000) setCount(1000);
+                  if (count > 0 && count <= 1000) {
+                    setResultsPage(1);
+                    curate(query, count);
+                  }
                 }}
                 className="w-14 bg-surface-container-highest border border-border-strong text-text-secondary text-xs font-bold rounded px-2 h-8 outline-none focus:border-primary text-center [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
                 disabled={status === 'curating'}
@@ -160,9 +176,9 @@ export default function Home() {
             </div>
           </div>
         )}
-        <div className="flex-grow overflow-y-auto custom-scrollbar pr-4">
+        <div className="flex-grow overflow-y-auto custom-scrollbar pr-4 pb-12 relative">
           <div className="space-y-1">
-            {songs.map((song, i) => {
+            {paginatedSongs.map((song, i) => {
               const inPlaylist = playlistSongs.some(s => s.id === song.id);
               const isThisPlaying = currentSong?.id === song.id;
               
@@ -172,7 +188,7 @@ export default function Home() {
                     <img alt={song.title} src={song.albumArt || '/placeholder.png'} className="w-full h-full object-cover" />
                     <div 
                       className={`absolute inset-0 bg-black/40 flex items-center justify-center transition-opacity cursor-pointer ${isThisPlaying ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}
-                      onClick={() => isThisPlaying ? toggle() : playContext(songs, i)}
+                      onClick={() => isThisPlaying ? toggle() : playContext(songs, (resultsPage - 1) * resultsPerPage + i)}
                     >
                       <span className="material-symbols-outlined text-primary" style={{fontVariationSettings: "'FILL' 1"}}>
                         {isThisPlaying && isPlaying ? 'pause' : 'play_arrow'}
@@ -207,6 +223,17 @@ export default function Home() {
               );
             })}
           </div>
+          {songs.length > 0 && (
+            <div className="mt-4">
+              <Pagination
+                currentPage={resultsPage}
+                totalPages={totalResultsPages}
+                onPageChange={setResultsPage}
+                itemsPerPage={resultsPerPage}
+                onItemsPerPageChange={(val) => { setResultsPerPage(val); setResultsPage(1); }}
+              />
+            </div>
+          )}
         </div>
       </section>
 
@@ -244,7 +271,7 @@ export default function Home() {
             </div>
           ) : (
             <div className="space-y-4">
-              {playlistSongs.map(song => {
+              {paginatedPlaylist.map(song => {
                 const isThisPlaying = currentSong?.id === song.id;
                 return (
                 <div key={song.id} className={`flex items-center gap-3 py-2 group ${isThisPlaying ? 'bg-surface-container-low rounded px-2 -mx-2' : ''}`}>
@@ -265,6 +292,17 @@ export default function Home() {
                   </button>
                 </div>
               )})}
+              {playlistSongs.length > 0 && (
+                <div className="mt-4">
+                  <Pagination
+                    currentPage={playlistPage}
+                    totalPages={totalPlaylistPages}
+                    onPageChange={setPlaylistPage}
+                    itemsPerPage={playlistPerPage}
+                    onItemsPerPageChange={(val) => { setPlaylistPerPage(val); setPlaylistPage(1); }}
+                  />
+                </div>
+              )}
             </div>
           )}
         </div>

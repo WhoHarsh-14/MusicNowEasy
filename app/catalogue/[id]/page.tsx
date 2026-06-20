@@ -7,6 +7,7 @@ import { useCatalogueStore, usePlayer, usePlaylist } from '@/lib/store';
 import { useAICurate } from '@/hooks/useAICurate';
 import { downloadPlaylist, DownloadProgress } from '@/lib/download';
 import DownloadModal from '@/components/DownloadModal';
+import { Pagination } from '@/components/Pagination';
 
 export default function CatalogueDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const router = useRouter();
@@ -29,6 +30,9 @@ export default function CatalogueDetailPage({ params }: { params: Promise<{ id: 
   const hasAppended = useRef(false);
   const prevStatusRef = useRef(status);
   const baseSongsRef = useRef(collection?.songs || []);
+
+  const [currentPage, setCurrentPage] = useState(1);
+  const [itemsPerPage, setItemsPerPage] = useState(50);
 
   useEffect(() => {
     setMounted(true);
@@ -66,6 +70,9 @@ export default function CatalogueDetailPage({ params }: { params: Promise<{ id: 
     : (baseSongs.length > 0 ? baseSongs : aiSongs);
     
   const isFilled = activeSongs.length > 0;
+  
+  const totalPages = Math.ceil(activeSongs.length / itemsPerPage);
+  const paginatedSongs = activeSongs.slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage);
 
   const handleMagicFill = (append = false) => {
     hasAppended.current = append;
@@ -222,8 +229,8 @@ export default function CatalogueDetailPage({ params }: { params: Promise<{ id: 
       )}
 
       {isFilled && (
-        <div className="bg-surface-container-lowest border border-border-strong rounded-xl overflow-hidden">
-          {activeSongs.map((song, i) => {
+        <div className="bg-surface-container-lowest border border-border-strong rounded-xl overflow-hidden mb-6">
+          {paginatedSongs.map((song, i) => {
             const inPlaylist = playlistSongs.some(s => s.id === song.id);
             const isThisPlaying = currentSong?.id === song.id;
             
@@ -235,7 +242,7 @@ export default function CatalogueDetailPage({ params }: { params: Promise<{ id: 
                   <img alt={song.title} src={song.albumArt || '/placeholder.png'} className="w-full h-full object-cover" />
                   <div 
                     className={`absolute inset-0 bg-black/40 flex items-center justify-center transition-opacity cursor-pointer ${isThisPlaying ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}
-                    onClick={() => isThisPlaying ? toggle() : playContext(activeSongs, i)}
+                    onClick={() => isThisPlaying ? toggle() : playContext(activeSongs, (currentPage - 1) * itemsPerPage + i)}
                   >
                     <span className="material-symbols-outlined text-primary" style={{fontVariationSettings: "'FILL' 1"}}>
                       {isThisPlaying && isPlaying ? 'pause' : 'play_arrow'}
@@ -269,6 +276,17 @@ export default function CatalogueDetailPage({ params }: { params: Promise<{ id: 
               </div>
             );
           })}
+          {activeSongs.length > 0 && (
+            <div className="p-4 border-t border-border-strong">
+              <Pagination
+                currentPage={currentPage}
+                totalPages={totalPages}
+                onPageChange={setCurrentPage}
+                itemsPerPage={itemsPerPage}
+                onItemsPerPageChange={(val) => { setItemsPerPage(val); setCurrentPage(1); }}
+              />
+            </div>
+          )}
         </div>
       )}
 
