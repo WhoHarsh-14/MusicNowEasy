@@ -5,6 +5,7 @@ import { useCurate } from '@/hooks/useCurate';
 import { usePlaylist, usePlayer, useCatalogueStore } from '@/lib/store';
 import { downloadPlaylist, DownloadProgress } from '@/lib/download';
 import DownloadModal from '@/components/DownloadModal';
+import { Pagination } from '@/components/Pagination';
 
 export default function Home() {
   const [query, setQuery] = useState('');
