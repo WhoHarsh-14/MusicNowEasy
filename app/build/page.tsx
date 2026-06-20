@@ -32,7 +32,7 @@ export default function Home() {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [progress, setProgress] = useState<DownloadProgress | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
-  const [playlistName, setPlaylistName] = useState('EventBros Masterset');
+  const [playlistName, setPlaylistName] = useState('');
   const [saveSuccess, setSaveSuccess] = useState(false);
   const savePlaylistAsCollection = useCatalogueStore(state => state.savePlaylistAsCollection);
 
@@ -41,7 +41,11 @@ export default function Home() {
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault();
     if (query.trim()) {
+      setResultsPage(1);
       curate(query, count);
+      if (!playlistName.trim() || playlistName === 'EventBros Masterset') {
+        setPlaylistName(query.trim());
+      }
     }
   };
 
@@ -53,7 +57,8 @@ export default function Home() {
     abortControllerRef.current = controller;
     
     try {
-      await downloadPlaylist(playlistSongs, "EventBros_Playlist", (p) => {
+      const safeName = (playlistName.trim() || "My_Playlist").replace(/[^a-z0-9]/gi, '_').toLowerCase();
+      await downloadPlaylist(playlistSongs, `BeatVault_${safeName}`, (p) => {
         setProgress(p);
       }, controller.signal);
       
@@ -119,6 +124,9 @@ export default function Home() {
                   if (count > 0 && count <= 1000) {
                     setResultsPage(1);
                     curate(query, count);
+                    if (!playlistName.trim() || playlistName === 'EventBros Masterset') {
+                      setPlaylistName(query.trim());
+                    }
                   }
                 }}
                 className="w-14 bg-surface-container-highest border border-border-strong text-text-secondary text-xs font-bold rounded px-2 h-8 outline-none focus:border-primary text-center [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
