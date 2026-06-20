@@ -250,8 +250,13 @@ export default function Home() {
       <aside className="md:col-span-4 flex flex-col h-full overflow-hidden bg-surface-container-lowest border-l border-border-strong px-6 pt-8 pb-4">
         <div className="flex items-center justify-between mb-4">
           <h2 className="font-display text-h3 text-primary font-bold">My Playlist</h2>
-          <div className="flex items-center gap-2">
-            <button onClick={clear} disabled={!mounted || playlistSongs.length === 0} className="text-text-secondary hover:text-text-primary font-label text-[10px] uppercase tracking-widest transition-colors disabled:opacity-50">
+          <div className="flex items-center gap-4">
+            <button 
+              onClick={() => { clear(); setPlaylistName(''); setPlaylistPage(1); }} 
+              disabled={!mounted || playlistSongs.length === 0} 
+              className="text-text-secondary hover:text-error transition-colors font-label text-[10px] uppercase tracking-widest flex items-center gap-1 active:scale-95 disabled:opacity-50"
+            >
+              <span className="material-symbols-outlined text-[16px]">delete</span>
               Clear All
             </button>
             <div className="bg-surface-container-highest px-3 py-1 rounded-full border border-border">

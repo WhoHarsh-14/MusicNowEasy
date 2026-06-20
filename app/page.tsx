@@ -46,7 +46,7 @@ export default function CataloguePage() {
 
   const { currentSong, isPlaying, playContext, toggle } = usePlayer();
   const [query, setQuery] = useState('');
-  const { songs, status, error, curate } = useCurate();
+  const { songs, status, error, curate, clear: clearResults } = useCurate();
 
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault();
@@ -92,10 +92,11 @@ export default function CataloguePage() {
             <div className="flex justify-between items-center mb-4">
               <h3 className="font-display text-xs font-bold text-text-secondary uppercase tracking-widest">Search Results</h3>
               <button 
-                onClick={() => setQuery('')} // simple way to clear/hide results
-                className="text-text-tertiary hover:text-text-primary text-xs"
+                onClick={() => { setQuery(''); clearResults(); }} 
+                className="text-text-tertiary hover:text-error transition-colors font-label text-[10px] uppercase tracking-widest flex items-center gap-1 active:scale-95"
               >
-                Clear
+                <span className="material-symbols-outlined text-[16px]">close</span>
+                Close
               </button>
             </div>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
