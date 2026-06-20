@@ -9,7 +9,7 @@
     "start": "node node_modules/next/dist/bin/next start",
     "dev:desktop": "cross-env NODE_ENV=development concurrently \"npm run dev\" \"wait-on http://localhost:3000 && electron .\"",
     "postbuild": "node scripts/fix-symlinks.js && shx mkdir -p .next/standalone/public .next/standalone/.next/static && shx cp -r public/* .next/standalone/public/ && shx cp -r .next/static/* .next/standalone/.next/static/",
-    "build:desktop": "shx rm -rf dist && npm run build && npm run postbuild && electron-builder build --win --x64"
+    "build:desktop": "shx rm -rf dist && npm run build && npm run postbuild && cross-env CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder build --win --x64"
   },
   "build": {
     "asar": false,
@@ -29,8 +29,9 @@
       { "from": "yt-dlp.exe", "to": "yt-dlp.exe" },
       { "from": ".env.local", "to": "resources/app-env.cfg" }
     ],
+    "forceCodeSigning": false,
     "win": {
-      "target": "nsis",
+      "target": "zip",
       "icon": "public/placeholder.png"
     }
   },
