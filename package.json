@@ -31,8 +31,11 @@
     ],
     "forceCodeSigning": false,
     "win": {
-      "target": "zip",
+      "target": "nsis",
       "icon": "public/placeholder.png"
+    },
+    "nsis": {
+      "packElevateHelper": false
     }
   },
   "dependencies": {
