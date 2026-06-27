@@ -7,6 +7,7 @@ A powerful, AI-driven desktop application built for professional DJs and music e
 ## ✨ Features
 
 - **🤖 AI Smart Curation:** Uses advanced AI (Groq API) to instantly auto-generate 20+ track playlists tailored to specific themes, events, or vibes (e.g., "Wedding Special", "EDM Club Hits").
+- **🚀 High-Speed Spotify Downloader:** Download complete Spotify playlists at maximum bandwidth! Bypasses YouTube's CDN stream throttling using HTTP Range chunking, directly downloading tracks at 10-50 MB/s.
 - **📂 Interactive Catalogue:** A robust, folder-based homepage allowing easy navigation through pre-built music collections.
 - **🎵 Built-in Audio Player:** Stream your generated playlists directly inside the application with an integrated, sleek audio player.
 - **⚡ Next.js + Electron Power:** Built with the bleeding-edge Next.js 16 App Router (Turbopack) wrapped flawlessly in Electron for a lightning-fast native desktop experience.
