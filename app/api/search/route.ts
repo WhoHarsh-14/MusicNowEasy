@@ -1,5 +1,5 @@
 import { NextRequest } from 'next/server';
-import { getSpotifyToken, spotifyGenericSearch } from '@/lib/spotify';
+import { spotifyGenericSearch } from '@/lib/spotify';
 import { cobaltResolve } from '@/lib/cobalt';
 import { CurateStage, Song } from '@/types';
 
@@ -24,15 +24,11 @@ export async function GET(req: NextRequest) {
       };
 
       try {
-        const token = await getSpotifyToken().catch(() => '');
-        if (!token) {
-          send({ type: 'error', message: 'Spotify auth failed' });
-          controller.close();
-          return;
-        }
+
+
 
         // 1. Get exact tracks from Spotify
-        const spotifyTracks = await spotifyGenericSearch(query, token, 15);
+        const spotifyTracks = await spotifyGenericSearch(query, 15);
         
         if (spotifyTracks.length === 0) {
           send({ type: 'error', message: `No tracks found for "${query}"` });

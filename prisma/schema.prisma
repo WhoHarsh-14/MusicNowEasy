@@ -16,3 +16,16 @@ model QueryHistory {
 
   @@map("query_history")
 }
+
+model PlaylistCache {
+  id        String   @id @default(uuid())
+  sourceUrl String   @map("source_url")
+  platform  String
+  songCount Int      @map("song_count")
+  songsJson Json     @map("songs_json")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([sourceUrl])
+  @@index([createdAt(sort: Desc)])
+  @@map("playlist_cache")
+}

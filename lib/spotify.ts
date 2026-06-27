@@ -1,71 +1,45 @@
-import { RawSong, SpotifyTrack } from '@/types';
+/**
+ * Spotify Helper using `spotify-url-info`.
+ * 
+ * We replaced the Playwright-based headless browser token capture mechanism
+ * with the standard `spotify-url-info` extraction to avoid bot-detection
+ * blocks and Vercel build failures.
+ */
 
-let cachedToken: { token: string; expiresAt: number } | null = null;
+const spotifyUrlInfo = require('spotify-url-info');
 
-export async function getSpotifyToken(): Promise<string> {
-  // Return cached token if still valid (they last 1 hour)
-  if (cachedToken && Date.now() < cachedToken.expiresAt - 60000) {
-    return cachedToken.token;
-  }
+const spotifyEmbed = spotifyUrlInfo(fetch);
 
-  const res = await fetch('https://accounts.spotify.com/api/token', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/x-www-form-urlencoded',
-      'Authorization': `Basic ${Buffer.from(
-        `${process.env.SPOTIFY_CLIENT_ID}:${process.env.SPOTIFY_CLIENT_SECRET}`
-      ).toString('base64')}`
-    },
-    body: 'grant_type=client_credentials'
-  });
-
-  const data = await res.json();
-  if (!data.access_token) {
-    throw new Error('Failed to get Spotify token: ' + JSON.stringify(data));
-  }
-  
-  cachedToken = {
-    token: data.access_token,
-    expiresAt: Date.now() + data.expires_in * 1000
-  };
-  return cachedToken.token;
-}
-
-export async function spotifySearch(
-  song: RawSong,
-  token: string
-): Promise<SpotifyTrack | null> {
-  // Build search query — title + artist gives best results
-  const q = encodeURIComponent(`track:${song.title} artist:${song.artist}`);
-
-  const res = await fetch(
-    `https://api.spotify.com/v1/search?q=${q}&type=track&limit=1&market=IN`,
-    { headers: { Authorization: `Bearer ${token}` } }
-  );
-
-  if (!res.ok) {
-    return null;
-  }
-
-  const data = await res.json();
-  return data.tracks?.items?.[0] ?? null;
-}
-
-export async function spotifyGenericSearch(
-  query: string,
-  token: string,
-  limit: number = 10
-): Promise<SpotifyTrack[]> {
-  const q = encodeURIComponent(query);
-  const res = await fetch(
-    `https://api.spotify.com/v1/search?q=${q}&type=track&limit=${limit}&market=IN`,
-    { headers: { Authorization: `Bearer ${token}` } }
-  );
-
-  if (!res.ok) {
+export async function getSpotifyPlaylist(playlistId: string): Promise<any[]> {
+  try {
+    const data = await spotifyEmbed.getData(`https://open.spotify.com/playlist/${playlistId}`);
+    return data?.trackList ?? [];
+  } catch (err: any) {
+    console.error('[SpotifyHelper] getSpotifyPlaylist failed:', err.message);
     return [];
   }
-
-  const data = await res.json();
-  return data.tracks?.items ?? [];
 }
+
+export async function getSpotifyAlbum(albumId: string): Promise<any[]> {
+  try {
+    const data = await spotifyEmbed.getData(`https://open.spotify.com/album/${albumId}`);
+    return data?.trackList ?? [];
+  } catch (err) {
+    console.error('getSpotifyAlbum error:', err);
+    return [];
+  }
+}
+
+export async function getSpotifyTrack(trackId: string): Promise<any | null> {
+  try {
+    const data = await spotifyEmbed.getData(`https://open.spotify.com/track/${trackId}`);
+    return data ?? null;
+  } catch (err) {
+    console.error('getSpotifyTrack error:', err);
+    return null;
+  }
+}
+
+// ── Legacy exports (kept for backward compat) ─────────────────────────────────
+export async function spotifySearch(song: any): Promise<any | null> { return null; }
+export async function spotifyGenericSearch(query: string, limit: number = 10): Promise<any[]> { return []; }

@@ -24,6 +24,7 @@ export type RawSong = {
 export type CurateStage =
   | { type: "song"; song: Song }
   | { type: "status"; message: string }
+  | { type: "meta"; total: number; platform: string; fromCache: boolean }
   | { type: "done" }
   | { type: "error"; message: string };
 

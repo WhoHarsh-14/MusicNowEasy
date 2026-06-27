@@ -54,6 +54,12 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             >
               Build Playlist
             </Link>
+            <Link 
+              className={`font-body text-body font-semibold transition-colors ${pathname === '/downloader' ? 'text-primary border-b-2 border-primary pb-1' : 'text-text-secondary hover:text-text-primary'}`} 
+              href="/downloader"
+            >
+              Downloader
+            </Link>
           </nav>
 
         </header>

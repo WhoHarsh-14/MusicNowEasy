@@ -1,6 +1,6 @@
 import { NextRequest } from 'next/server';
 import { collectGroqSongs, MAX_CONCURRENT } from '@/lib/groq';
-import { spotifySearch, getSpotifyToken } from '@/lib/spotify';
+import { spotifySearch } from '@/lib/spotify';
 import { cobaltResolve } from '@/lib/cobalt';
 import { db } from '@/lib/db';
 import { CurateStage, Song, RawSong } from '@/types';
@@ -72,7 +72,7 @@ export async function POST(req: NextRequest) {
       const resolvedSongs: Song[] = [];
       const seenKeys = new Set<string>();
 
-      const enrichAndSend = async (rawSong: RawSong, token: string) => {
+      const enrichAndSend = async (rawSong: RawSong) => {
         if (req.signal.aborted) return;
 
         // Deduplicate by normalised title+artist
@@ -81,7 +81,7 @@ export async function POST(req: NextRequest) {
         seenKeys.add(key);
 
         const [spotifyTrack, audioUrl] = await Promise.all([
-          token ? spotifySearch(rawSong, token).catch(() => null) : null,
+          spotifySearch(rawSong).catch(() => null),
           cobaltResolve(rawSong).catch(() => null),
         ]);
 
@@ -103,8 +103,7 @@ export async function POST(req: NextRequest) {
       };
 
       try {
-        const token = await getSpotifyToken().catch(() => '');
-        const groqSlot = createSemaphore(MAX_CONCURRENT);
+const groqSlot = createSemaphore(MAX_CONCURRENT);
 
         const fetchWithRetry = async (queryStr: string, amt: number, excl: string[]): Promise<RawSong[]> => {
           while (true) {
@@ -134,7 +133,7 @@ export async function POST(req: NextRequest) {
         await Promise.all(
           batchPromises.map(async (batchPromise) => {
             const rawSongs = await batchPromise;
-            await Promise.all(rawSongs.map((song) => enrichAndSend(song, token)));
+            await Promise.all(rawSongs.map((song) => enrichAndSend(song)));
           })
         );
 
@@ -144,7 +143,7 @@ export async function POST(req: NextRequest) {
         if (missing > 0 && !req.signal.aborted) {
           const excludeList = [...clientExclude, ...resolvedSongs.map((s) => `${s.title} by ${s.artist}`)];
           const fillSongs = await fetchWithRetry(query, missing, excludeList);
-          await Promise.all(fillSongs.map((song) => enrichAndSend(song, token)));
+          await Promise.all(fillSongs.map((song) => enrichAndSend(song)));
         }
 
         send({ type: 'done' });

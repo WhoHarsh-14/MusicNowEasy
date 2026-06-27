@@ -5,7 +5,7 @@ const nextConfig: NextConfig = {
   // Fix: Turbopack generates hashed module IDs for Prisma (@prisma/client-xxxx)
   // that can't be resolved in the standalone build. Mark as external to use
   // regular require('@prisma/client') instead.
-  serverExternalPackages: ['@prisma/client', '.prisma/client'],
+  serverExternalPackages: ['@prisma/client', '.prisma/client', 'playwright-core'],
   // Bake env vars into the standalone build at compile time.
   // This is the most reliable way to bundle secrets in a packaged Electron desktop app.
   env: {

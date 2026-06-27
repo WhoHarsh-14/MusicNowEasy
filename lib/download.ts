@@ -76,37 +76,38 @@ export async function downloadPlaylist(
     const now = Date.now();
     const elapsedSec = (now - startTime) / 1000;
     const speedMBps = elapsedSec > 0 ? (bytesReceived / 1024 / 1024) / elapsedSec : 0;
-    
-    // Estimate remaining time
-    const bytesRemaining = Math.max(0, estimatedTotal - bytesReceived);
-    const timeRemainingSec = speedMBps > 0 ? (bytesRemaining / 1024 / 1024) / speedMBps : 0;
+
+    // ETA based on songs: more accurate than byte estimates when total is unknown
+    const avgSecPerSong = completed > 0 ? elapsedSec / completed : 0;
+    const timeRemainingSec = avgSecPerSong > 0 ? avgSecPerSong * (songs.length - completed) : 0;
 
     onProgress({
       songTitle: title,
       completed,
       total: songs.length,
       bytesReceived,
-      estimatedTotal,
+      estimatedTotal: 0,
       activeSongIds: [...activeSongIds],
       completedSongIds: [...completedSongIds],
       speedMBps,
-      timeRemainingSec: Math.max(0, timeRemainingSec)
+      timeRemainingSec: Math.max(0, timeRemainingSec),
     });
   };
 
+
+  // ── Phase 1 & 2 combined: Resolve and Download in parallel batches of 10 ─────────
+  // We process 5 songs concurrently. For each song, we ask the server to resolve the 
+  // yt-dlp direct CDN URL, and then immediately begin streaming it into the ZIP.
+  // We use 5 instead of 10 because yt-dlp spawns a Python process and runs Node JS decryption,
+  // which causes severe CPU thrashing if too many run simultaneously.
+  const BATCH_SIZE = 5;
+
   // Create streaming ZIP — each chunk written immediately to disk
   const zip = new Zip((err, chunk, final) => {
-    if (err) {
-      console.error("ZIP Error", err);
-      return;
-    }
-    writer.write(chunk);
-    if (final) writer.close();
+    if (err) { console.error('ZIP Error', err); return; }
+    writer!.write(chunk);
+    if (final) writer!.close();
   });
-
-  // Browser concurrency limit is 6 per origin
-  // Batch into groups of 6 for predictable parallel behaviour
-  const BATCH_SIZE = 6;
 
   for (let i = 0; i < songs.length; i += BATCH_SIZE) {
     if (signal?.aborted) break;
@@ -115,65 +116,107 @@ export async function downloadPlaylist(
 
     await Promise.all(batch.map(async (song) => {
       if (!song.audioUrl) {
-         completed++;
-         return;
+        completed++;
+        return;
       }
 
-      // Pro DJ Naming Format: Song Name – Artist – BPM – Key
-      // Note: Using placeholders for BPM/Key since Spotify Search doesn't return Audio Features by default.
-      const filename = `${song.title} - ${song.artist} - 128 BPM.mp3`
-        .replace(/[<>:"/\\|?*]/g, '');  // sanitise filename
+      const filename = `${song.title} - ${song.artist}.mp3`
+        .replace(/[<>:"/\\|?*]/g, '');
 
       try {
         activeSongIds.push(song.id);
-        const res = await fetch(song.audioUrl, { signal });
-        if (!res.ok) {
-           completed++;
-           const index = activeSongIds.indexOf(song.id);
-           if (index !== -1) activeSongIds.splice(index, 1);
-           completedSongIds.push(song.id);
-           return;
+
+        // The backend /api/stream route has been upgraded to pipe yt-dlp directly.
+        // Electron's webSecurity is disabled, allowing us to fetch the direct URL.
+        // We MUST use &resolve=true to get the raw URL instead of a redirect.
+        let resolveUrl = song.audioUrl;
+        if (song.audioUrl.includes('/api/stream')) {
+          resolveUrl = `${song.audioUrl}&resolve=true`;
         }
 
+        const resolveRes = await fetch(resolveUrl, { signal });
+        if (!resolveRes.ok) throw new Error('Resolve failed');
+        const resolveData = await resolveRes.json();
+        const directUrl = resolveData.url;
+
+        if (!directUrl) throw new Error('No direct URL returned');
+
+        let offset = 0;
+        const CHUNK_SIZE = 1024 * 1024; // 1MB chunks
         const entry = new ZipPassThrough(filename);
-        zip.add(entry);
+        let firstChunk = true;
 
-        const reader = res.body!.getReader();
-
+        // Loop to download the file in 1MB chunks.
+        // YouTube heavily throttles continuous streams to 0.1 MB/s (playback speed).
+        // By requesting chunks using the 'Range' header, we bypass the throttle 
+        // and download at 10-50 MB/s!
         while (true) {
-          const { done, value } = await reader.read();
+          if (signal?.aborted) break;
 
-          if (done) {
-            entry.push(new Uint8Array(0), true);
-            completed++;
-            const index = activeSongIds.indexOf(song.id);
-            if (index !== -1) activeSongIds.splice(index, 1);
-            completedSongIds.push(song.id);
-            emitProgress(song.title);
-            break;
+          const end = offset + CHUNK_SIZE - 1;
+          const chunkRes = await fetch(directUrl, {
+            headers: { 'Range': `bytes=${offset}-${end}` },
+            signal
+          });
+
+          // 416 means Range Not Satisfiable (we read past the end of the file)
+          if (chunkRes.status === 416) {
+             break;
           }
 
-          entry.push(value);
-          bytesReceived += value.length;
-          
-          // Throttle UI updates a bit to avoid maxing out react renders
-          const now = Date.now();
-          if (now - lastUpdateTime > 100) {
-            lastUpdateTime = now;
-            emitProgress(song.title);
+          if (!chunkRes.ok) {
+             throw new Error(`Chunk failed with status ${chunkRes.status}`);
           }
+
+          const buffer = await chunkRes.arrayBuffer();
+          const chunkArray = new Uint8Array(buffer);
+
+          if (firstChunk) {
+            if (chunkArray.length === 0) {
+              throw new Error('Stream empty');
+            }
+            zip.add(entry);
+            firstChunk = false;
+          }
+
+          if (chunkArray.length > 0) {
+            entry.push(chunkArray);
+            bytesReceived += chunkArray.length;
+            offset += chunkArray.length;
+
+            const now = Date.now();
+            if (now - lastUpdateTime > 80) {
+              lastUpdateTime = now;
+              emitProgress(song.title);
+            }
+          }
+
+          // If we received less than we asked for, we've hit the end of the file!
+          if (chunkArray.length < CHUNK_SIZE) {
+             break;
+          }
+        }
+
+        if (!firstChunk) {
+          entry.push(new Uint8Array(0), true);
+          completed++;
+          const idx = activeSongIds.indexOf(song.id);
+          if (idx !== -1) activeSongIds.splice(idx, 1);
+          completedSongIds.push(song.id);
+          emitProgress(song.title);
+        } else {
+          throw new Error('No data received');
         }
       } catch (err) {
-        // Skip failed song — continue with rest or abort if requested
         if (signal?.aborted) {
-          console.warn("Download aborted");
+          console.warn('Download aborted');
         } else {
           console.warn(`Skipped: ${song.title}`, err);
           completed++;
           completedSongIds.push(song.id);
         }
-        const index = activeSongIds.indexOf(song.id);
-        if (index !== -1) activeSongIds.splice(index, 1);
+        const idx = activeSongIds.indexOf(song.id);
+        if (idx !== -1) activeSongIds.splice(idx, 1);
       }
     }));
   }
