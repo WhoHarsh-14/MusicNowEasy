@@ -145,67 +145,79 @@ export async function downloadPlaylist(
         const CHUNK_SIZE = 1024 * 1024; // 1MB chunks
         const entry = new ZipPassThrough(filename);
         let firstChunk = true;
+        let streamClosed = false;
 
-        // Loop to download the file in 1MB chunks.
-        // YouTube heavily throttles continuous streams to 0.1 MB/s (playback speed).
-        // By requesting chunks using the 'Range' header, we bypass the throttle 
-        // and download at 10-50 MB/s!
-        while (true) {
-          if (signal?.aborted) break;
+        try {
+          // Loop to download the file in 1MB chunks.
+          // YouTube heavily throttles continuous streams to 0.1 MB/s (playback speed).
+          // By requesting chunks using the 'Range' header, we bypass the throttle 
+          // and download at 10-50 MB/s!
+          while (true) {
+            if (signal?.aborted) break;
 
-          const end = offset + CHUNK_SIZE - 1;
-          const chunkRes = await fetch(directUrl, {
-            headers: { 'Range': `bytes=${offset}-${end}` },
-            signal
-          });
+            const end = offset + CHUNK_SIZE - 1;
+            const chunkRes = await fetch(directUrl, {
+              headers: { 'Range': `bytes=${offset}-${end}` },
+              signal
+            });
 
-          // 416 means Range Not Satisfiable (we read past the end of the file)
-          if (chunkRes.status === 416) {
-             break;
-          }
-
-          if (!chunkRes.ok) {
-             throw new Error(`Chunk failed with status ${chunkRes.status}`);
-          }
-
-          const buffer = await chunkRes.arrayBuffer();
-          const chunkArray = new Uint8Array(buffer);
-
-          if (firstChunk) {
-            if (chunkArray.length === 0) {
-              throw new Error('Stream empty');
+            // 416 means Range Not Satisfiable (we read past the end of the file)
+            if (chunkRes.status === 416) {
+               break;
             }
-            zip.add(entry);
-            firstChunk = false;
-          }
 
-          if (chunkArray.length > 0) {
-            entry.push(chunkArray);
-            bytesReceived += chunkArray.length;
-            offset += chunkArray.length;
+            if (!chunkRes.ok) {
+               throw new Error(`Chunk failed with status ${chunkRes.status}`);
+            }
 
-            const now = Date.now();
-            if (now - lastUpdateTime > 80) {
-              lastUpdateTime = now;
-              emitProgress(song.title);
+            const buffer = await chunkRes.arrayBuffer();
+            const chunkArray = new Uint8Array(buffer);
+
+            if (firstChunk) {
+              if (chunkArray.length === 0) {
+                throw new Error('Stream empty');
+              }
+              zip.add(entry);
+              firstChunk = false;
+            }
+
+            if (chunkArray.length > 0) {
+              entry.push(chunkArray);
+              bytesReceived += chunkArray.length;
+              offset += chunkArray.length;
+
+              const now = Date.now();
+              if (now - lastUpdateTime > 80) {
+                lastUpdateTime = now;
+                emitProgress(song.title);
+              }
+            }
+
+            // If we received less than we asked for, we've hit the end of the file!
+            if (chunkArray.length < CHUNK_SIZE) {
+               break;
             }
           }
 
-          // If we received less than we asked for, we've hit the end of the file!
-          if (chunkArray.length < CHUNK_SIZE) {
-             break;
+          if (!firstChunk) {
+            entry.push(new Uint8Array(0), true);
+            streamClosed = true;
+            completed++;
+            const idx = activeSongIds.indexOf(song.id);
+            if (idx !== -1) activeSongIds.splice(idx, 1);
+            completedSongIds.push(song.id);
+            emitProgress(song.title);
+          } else {
+            throw new Error('No data received');
           }
-        }
-
-        if (!firstChunk) {
-          entry.push(new Uint8Array(0), true);
-          completed++;
-          const idx = activeSongIds.indexOf(song.id);
-          if (idx !== -1) activeSongIds.splice(idx, 1);
-          completedSongIds.push(song.id);
-          emitProgress(song.title);
-        } else {
-          throw new Error('No data received');
+        } catch (err) {
+          // If we started writing the file but an error occurred, we MUST close the stream
+          // otherwise the fflate ZIP will hang forever waiting for this file to finish!
+          if (!firstChunk && !streamClosed) {
+            entry.push(new Uint8Array(0), true);
+            streamClosed = true;
+          }
+          throw err; // Re-throw to be caught by outer block
         }
       } catch (err) {
         if (signal?.aborted) {
