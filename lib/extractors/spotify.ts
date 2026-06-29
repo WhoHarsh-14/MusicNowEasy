@@ -17,6 +17,7 @@ let spotifyTokenExpiresAt = 0;
 async function getSpotifyToken(): Promise<string> {
   const clientId = process.env.SPOTIFY_CLIENT_ID;
   const clientSecret = process.env.SPOTIFY_CLIENT_SECRET;
+  const refreshToken = process.env.SPOTIFY_REFRESH_TOKEN;
   
   if (!clientId || !clientSecret) {
     throw new Error('Missing Spotify credentials');
@@ -26,17 +27,22 @@ async function getSpotifyToken(): Promise<string> {
     return spotifyAccessToken;
   }
 
+  const body = refreshToken 
+    ? `grant_type=refresh_token&refresh_token=${encodeURIComponent(refreshToken)}`
+    : `grant_type=client_credentials`;
+
   const res = await fetch('https://accounts.spotify.com/api/token', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/x-www-form-urlencoded',
       'Authorization': 'Basic ' + Buffer.from(clientId + ':' + clientSecret).toString('base64'),
     },
-    body: 'grant_type=client_credentials',
+    body: body,
   });
 
   if (!res.ok) {
-    throw new Error('Failed to fetch Spotify access token');
+    const err = await res.text();
+    throw new Error(`Failed to fetch Spotify access token: HTTP ${res.status} - ${err}`);
   }
 
   const data = await res.json();
