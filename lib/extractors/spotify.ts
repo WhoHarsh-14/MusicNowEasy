@@ -11,10 +11,90 @@
 
 import type { RawSong } from './detector';
 
+let spotifyAccessToken: string | null = null;
+let spotifyTokenExpiresAt = 0;
+
+async function getSpotifyToken(): Promise<string> {
+  const clientId = process.env.SPOTIFY_CLIENT_ID;
+  const clientSecret = process.env.SPOTIFY_CLIENT_SECRET;
+  
+  if (!clientId || !clientSecret) {
+    throw new Error('Missing Spotify credentials');
+  }
+
+  if (spotifyAccessToken && Date.now() < spotifyTokenExpiresAt) {
+    return spotifyAccessToken;
+  }
+
+  const res = await fetch('https://accounts.spotify.com/api/token', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/x-www-form-urlencoded',
+      'Authorization': 'Basic ' + Buffer.from(clientId + ':' + clientSecret).toString('base64'),
+    },
+    body: 'grant_type=client_credentials',
+  });
+
+  if (!res.ok) {
+    throw new Error('Failed to fetch Spotify access token');
+  }
+
+  const data = await res.json();
+  spotifyAccessToken = data.access_token;
+  spotifyTokenExpiresAt = Date.now() + (data.expires_in - 60) * 1000;
+  return spotifyAccessToken!;
+}
+
 export async function extractSpotifyPlaylist(url: string): Promise<RawSong[]> {
   const match = url.match(/playlist\/([a-zA-Z0-9]+)/);
   if (!match) throw new Error('Invalid Spotify playlist URL');
   const playlistId = match[1];
+
+  // If we have API keys, use the robust official Web API to bypass the 100-track limit
+  if (process.env.SPOTIFY_CLIENT_ID && process.env.SPOTIFY_CLIENT_SECRET) {
+    try {
+      console.log(`[Spotify] Fetching playlist ${playlistId} via official API...`);
+      const token = await getSpotifyToken();
+      
+      const allTracks: RawSong[] = [];
+      let nextUrl: string | null = `https://api.spotify.com/v1/playlists/${playlistId}/tracks?limit=100`;
+      
+      while (nextUrl) {
+        const res = await fetch(nextUrl, {
+          headers: { 'Authorization': `Bearer ${token}` }
+        });
+        
+        if (!res.ok) {
+          const errText = await res.text();
+          throw new Error(`Spotify API error: HTTP ${res.status} - ${errText}`);
+        }
+        
+        const data = await res.json();
+        const items = data.items || [];
+        
+        for (const item of items) {
+          const track = item.track;
+          if (!track || !track.name) continue;
+          
+          allTracks.push({
+            title: track.name,
+            artist: track.artists?.[0]?.name || 'Unknown Artist',
+            albumArt: track.album?.images?.[0]?.url || '',
+            durationMs: track.duration_ms || 0,
+            popularity: track.popularity || 0,
+            previewUrl: track.preview_url || null,
+          });
+        }
+        
+        nextUrl = data.next || null;
+      }
+      
+      console.log(`[Spotify] Extracted ${allTracks.length} tracks from official API.`);
+      if (allTracks.length > 0) return allTracks;
+    } catch (err: any) {
+      console.warn('[Spotify] Official API failed, falling back to embed extraction:', err);
+    }
+  }
 
   console.log(`[Spotify] Fetching embed widget for playlist ${playlistId}...`);
   const embedUrl = `https://open.spotify.com/embed/playlist/${playlistId}?utm_source=generator`;
