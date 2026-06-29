@@ -85,3 +85,9 @@ npm run build:desktop
 4. Uses `electron-builder` to package everything into a highly optimized Windows installer.
 
 Once the build is complete, you will find your standalone application installer inside the **`dist/`** directory!
+
+---
+
+## 🙏 Acknowledgements
+
+Special thanks to **[AliAkhtari78](https://github.com/AliAkhtari78)** and the **[SpotifyScraper](https://github.com/AliAkhtari78/SpotifyScraper)** project. Their brilliant discovery of bypassing the Spotify Web API 100-track limit by harvesting anonymous tokens from the Embed player and hitting the internal GraphQL pathfinder endpoint made our native TypeScript integration possible. Full credit for the reverse-engineering of this bypass methodology goes to them.

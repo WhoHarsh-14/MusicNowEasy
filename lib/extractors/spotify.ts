@@ -2,116 +2,34 @@
  * Spotify playlist extractor.
  * 
  * Strategy:
- * Instead of using heavy and brittle headless browsers (which get blocked by Spotify WAF),
- * we fetch the public Spotify Embed widget HTML (`/embed/playlist/...`).
- * The embed HTML contains a `__NEXT_DATA__` JSON blob with up to 100 tracks,
- * which is more than enough for most use cases, and it completely bypasses 
- * API rate limits, bot blocks, and token requirements.
+ * We bypass the official Web API and the 100-track limit by using Spotify's internal GraphQL API ("pathfinder").
+ * To authenticate anonymously, we fetch a short-lived token from a public Embed widget URL,
+ * which is fully authorized to query the pathfinder endpoint for public playlists.
+ * We then paginate through the playlist tracks using the `offset` parameter until we have them all.
  */
 
 import type { RawSong } from './detector';
 
-let spotifyAccessToken: string | null = null;
-let spotifyTokenExpiresAt = 0;
+let anonymousToken: string | null = null;
+let anonymousTokenExpiresAt = 0;
 
-async function getSpotifyToken(): Promise<string> {
-  const clientId = process.env.SPOTIFY_CLIENT_ID;
-  const clientSecret = process.env.SPOTIFY_CLIENT_SECRET;
-  const refreshToken = process.env.SPOTIFY_REFRESH_TOKEN;
-  
-  if (!clientId || !clientSecret) {
-    throw new Error('Missing Spotify credentials');
+/**
+ * Fetches an anonymous access token from a Spotify Embed page.
+ * This token allows us to query the pathfinder GraphQL API without user authentication.
+ */
+async function getAnonymousToken(): Promise<string> {
+  if (anonymousToken && Date.now() < anonymousTokenExpiresAt) {
+    return anonymousToken;
   }
 
-  if (spotifyAccessToken && Date.now() < spotifyTokenExpiresAt) {
-    return spotifyAccessToken;
-  }
-
-  const body = refreshToken 
-    ? `grant_type=refresh_token&refresh_token=${encodeURIComponent(refreshToken)}`
-    : `grant_type=client_credentials`;
-
-  const res = await fetch('https://accounts.spotify.com/api/token', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/x-www-form-urlencoded',
-      'Authorization': 'Basic ' + Buffer.from(clientId + ':' + clientSecret).toString('base64'),
-    },
-    body: body,
-  });
-
-  if (!res.ok) {
-    const err = await res.text();
-    throw new Error(`Failed to fetch Spotify access token: HTTP ${res.status} - ${err}`);
-  }
-
-  const data = await res.json();
-  spotifyAccessToken = data.access_token;
-  spotifyTokenExpiresAt = Date.now() + (data.expires_in - 60) * 1000;
-  return spotifyAccessToken!;
-}
-
-export async function extractSpotifyPlaylist(url: string): Promise<RawSong[]> {
-  const match = url.match(/playlist\/([a-zA-Z0-9]+)/);
-  if (!match) throw new Error('Invalid Spotify playlist URL');
-  const playlistId = match[1];
-
-  // If we have API keys, use the robust official Web API to bypass the 100-track limit
-  if (process.env.SPOTIFY_CLIENT_ID && process.env.SPOTIFY_CLIENT_SECRET) {
-    try {
-      console.log(`[Spotify] Fetching playlist ${playlistId} via official API...`);
-      const token = await getSpotifyToken();
-      
-      const allTracks: RawSong[] = [];
-      let nextUrl: string | null = `https://api.spotify.com/v1/playlists/${playlistId}/tracks?limit=100`;
-      
-      while (nextUrl) {
-        const res = await fetch(nextUrl, {
-          headers: { 'Authorization': `Bearer ${token}` }
-        });
-        
-        if (!res.ok) {
-          const errText = await res.text();
-          throw new Error(`Spotify API error: HTTP ${res.status} - ${errText}`);
-        }
-        
-        const data = await res.json();
-        const items = data.items || [];
-        
-        for (const item of items) {
-          const track = item.track;
-          if (!track || !track.name) continue;
-          
-          allTracks.push({
-            title: track.name,
-            artist: track.artists?.[0]?.name || 'Unknown Artist',
-            albumArt: track.album?.images?.[0]?.url || '',
-            durationMs: track.duration_ms || 0,
-            popularity: track.popularity || 0,
-            previewUrl: track.preview_url || null,
-          });
-        }
-        
-        nextUrl = data.next || null;
-      }
-      
-      console.log(`[Spotify] Extracted ${allTracks.length} tracks from official API.`);
-      if (allTracks.length > 0) return allTracks;
-    } catch (err: any) {
-      console.warn('[Spotify] Official API failed, falling back to embed extraction:', err);
-    }
-  }
-
-  console.log(`[Spotify] Fetching embed widget for playlist ${playlistId}...`);
-  const embedUrl = `https://open.spotify.com/embed/playlist/${playlistId}?utm_source=generator`;
-
+  // We fetch a generic track embed page to harvest its token
+  const embedUrl = 'https://open.spotify.com/embed/track/4uLU6hMCjMI75M1A2tKUQC';
   const res = await fetch(embedUrl, {
     headers: {
       'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
       'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
-      'Accept-Language': 'en-US,en;q=0.5',
     },
-    signal: AbortSignal.timeout(15000),
+    signal: AbortSignal.timeout(10000),
   });
 
   if (!res.ok) {
@@ -119,59 +37,128 @@ export async function extractSpotifyPlaylist(url: string): Promise<RawSong[]> {
   }
 
   const html = await res.text();
-  const startStr = 'id="__NEXT_DATA__" type="application/json">';
-  const startIndex = html.indexOf(startStr);
   
-  if (startIndex === -1) {
-    throw new Error('Could not find playlist data in Spotify response. The playlist might be private.');
+  // The token is embedded within the __NEXT_DATA__ JSON script or directly in a script tag.
+  // Using a regex is the most resilient way to extract it without relying on exact JSON paths.
+  const match = html.match(/"accessToken":"([^"]+)"/);
+  const expiryMatch = html.match(/"accessTokenExpirationTimestampMs":(\d+)/);
+
+  if (!match || !match[1]) {
+    throw new Error('Could not extract anonymous access token from Spotify embed page.');
   }
 
-  const jsonStart = startIndex + startStr.length;
-  const endIndex = html.indexOf('</script>', jsonStart);
-  const jsonStr = html.substring(jsonStart, endIndex);
-
-  let data;
-  try {
-    data = JSON.parse(jsonStr);
-  } catch (err) {
-    throw new Error('Failed to parse Spotify playlist data');
-  }
-
-  const entity = data?.props?.pageProps?.state?.data?.entity;
-  if (!entity || !entity.trackList) {
-    throw new Error('No tracklist found in Spotify data. It may be private or invalid.');
-  }
-
-  // Use playlist cover art as fallback for tracks that don't specify their own
-  const playlistCover = entity.coverArt?.sources?.[0]?.url || '';
+  anonymousToken = match[1];
+  anonymousTokenExpiresAt = expiryMatch && expiryMatch[1] ? parseInt(expiryMatch[1], 10) : Date.now() + 3000 * 1000;
   
+  return anonymousToken;
+}
+
+export async function extractSpotifyPlaylist(url: string): Promise<RawSong[]> {
+  const match = url.match(/playlist\/([a-zA-Z0-9]+)/);
+  if (!match) throw new Error('Invalid Spotify playlist URL');
+  const playlistId = match[1];
+
+  console.log(`[Spotify GraphQL] Extracting playlist ${playlistId} using pathfinder...`);
+  
+  const token = await getAnonymousToken();
   const allTracks: RawSong[] = [];
-  const items = entity.trackList;
+  
+  let offset = 0;
+  const limit = 100;
+  let totalCount = 0;
+  
+  // The exact sha256 hash Spotify uses for the fetchPlaylist GraphQL operation
+  const queryHash = "a65e12194ed5fc443a1cdebed5fabe33ca5b07b987185d63c72483867ad13cb4";
 
-  console.log(`[Spotify] Extracted ${items.length} tracks from embed data.`);
+  while (true) {
+    const variables = {
+      uri: `spotify:playlist:${playlistId}`,
+      offset,
+      limit,
+      enableWatchFeedEntrypoint: false
+    };
 
-  for (const track of items) {
-    if (!track.title) continue;
-    
-    // Subtitle is usually the artist name in the embed format
-    const artist = track.subtitle || 'Unknown Artist';
-    
-    // Tracks in embed usually don't have individual coverArt, so we fallback to playlist cover
-    const albumArt = track.coverArt?.sources?.[0]?.url || playlistCover;
-
-    allTracks.push({
-      title: track.title,
-      artist: artist,
-      albumArt: albumArt,
-      durationMs: track.duration || 0,
-      popularity: 0,
-      previewUrl: track.audioPreview?.url || null,
+    const params = new URLSearchParams({
+      operationName: "fetchPlaylist",
+      variables: JSON.stringify(variables),
+      extensions: JSON.stringify({ persistedQuery: { version: 1, sha256Hash: queryHash } })
     });
+
+    const gqlUrl = `https://api-partner.spotify.com/pathfinder/v1/query?${params.toString()}`;
+    
+    const res = await fetch(gqlUrl, {
+      headers: {
+        'Authorization': `Bearer ${token}`,
+        'app-platform': 'WebPlayer',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'
+      },
+      signal: AbortSignal.timeout(15000),
+    });
+
+    if (!res.ok) {
+      if (res.status === 401) {
+        // Token might have expired early, force a refresh on next call
+        anonymousToken = null; 
+      }
+      const err = await res.text();
+      throw new Error(`Spotify GraphQL error: HTTP ${res.status} - ${err}`);
+    }
+
+    const json = await res.json();
+    
+    // Check if Spotify returned any GraphQL errors
+    if (json.errors && json.errors.length > 0) {
+      throw new Error(`Spotify GraphQL returned errors: ${json.errors[0].message}`);
+    }
+
+    const playlistV2 = json?.data?.playlistV2;
+    if (!playlistV2) {
+      throw new Error('Playlist data is missing or private.');
+    }
+
+    const content = playlistV2.content;
+    const items = content?.items || [];
+    
+    if (offset === 0) {
+      totalCount = content?.totalCount || items.length;
+      console.log(`[Spotify GraphQL] Discovered ${totalCount} total tracks in playlist.`);
+    }
+
+    for (const edge of items) {
+      const itemData = edge?.itemV2?.data;
+      if (!itemData || itemData.__typename !== 'Track' || !itemData.name) {
+        continue;
+      }
+
+      const title = itemData.name;
+      const artist = itemData.artists?.items?.[0]?.profile?.name || 'Unknown Artist';
+      const albumArt = itemData.albumOfTrack?.coverArt?.sources?.[0]?.url || '';
+      const durationMs = itemData.trackDuration?.totalMilliseconds || 0;
+      const popularity = parseInt(itemData.playcount || '0', 10) || 0;
+
+      allTracks.push({
+        title,
+        artist,
+        albumArt,
+        durationMs,
+        popularity,
+        previewUrl: null // GraphQL doesn't typically provide audioPreview
+      });
+    }
+
+    offset += limit;
+    
+    if (offset >= totalCount || items.length === 0) {
+      break; // Reached the end
+    }
+    
+    console.log(`[Spotify GraphQL] Fetched ${allTracks.length} / ${totalCount} tracks. Paginating...`);
   }
 
   if (allTracks.length === 0) {
     throw new Error('Playlist is empty or tracks are unavailable.');
   }
 
+  console.log(`[Spotify GraphQL] Successfully extracted all ${allTracks.length} tracks.`);
   return allTracks;
 }
