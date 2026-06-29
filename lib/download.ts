@@ -134,12 +134,25 @@ export async function downloadPlaylist(
           resolveUrl = `${song.audioUrl}&resolve=true`;
         }
 
-        const resolveRes = await fetch(resolveUrl, { signal });
-        if (!resolveRes.ok) throw new Error('Resolve failed');
-        const resolveData = await resolveRes.json();
-        const directUrl = resolveData.url;
+        let directUrl = '';
+        let resolveRetries = 5;
+        while (resolveRetries > 0) {
+          if (signal?.aborted) break;
+          try {
+            const resolveRes = await fetch(resolveUrl, { signal });
+            if (resolveRes.ok) {
+              const resolveData = await resolveRes.json();
+              directUrl = resolveData.url;
+              if (directUrl) break;
+            }
+          } catch (err) {
+            console.warn(`Resolve failed for ${song.title}, retrying...`, err);
+          }
+          resolveRetries--;
+          if (resolveRetries > 0) await new Promise(r => setTimeout(r, 3000));
+        }
 
-        if (!directUrl) throw new Error('No direct URL returned');
+        if (!directUrl) throw new Error('Failed to extract direct URL after retries');
 
         let offset = 0;
         const CHUNK_SIZE = 1024 * 1024; // 1MB chunks
@@ -156,18 +169,36 @@ export async function downloadPlaylist(
             if (signal?.aborted) break;
 
             const end = offset + CHUNK_SIZE - 1;
-            const chunkRes = await fetch(directUrl, {
-              headers: { 'Range': `bytes=${offset}-${end}` },
-              signal
-            });
+            let chunkRes: Response | null = null;
+            let chunkRetries = 5;
+            let success = false;
+
+            while (chunkRetries > 0) {
+              if (signal?.aborted) break;
+              try {
+                chunkRes = await fetch(directUrl, {
+                  headers: { 'Range': `bytes=${offset}-${end}` },
+                  signal
+                });
+
+                if (chunkRes.ok || chunkRes.status === 416) {
+                  success = true;
+                  break;
+                }
+              } catch (err) {
+                console.warn(`Chunk fetch failed for ${song.title} at offset ${offset}, retrying...`, err);
+              }
+              chunkRetries--;
+              if (chunkRetries > 0) await new Promise(r => setTimeout(r, 2000));
+            }
+
+            if (!success || !chunkRes) {
+               throw new Error(`Chunk failed completely after 5 retries`);
+            }
 
             // 416 means Range Not Satisfiable (we read past the end of the file)
             if (chunkRes.status === 416) {
                break;
-            }
-
-            if (!chunkRes.ok) {
-               throw new Error(`Chunk failed with status ${chunkRes.status}`);
             }
 
             const buffer = await chunkRes.arrayBuffer();
